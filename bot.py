@@ -386,10 +386,36 @@ async def member_update_handler(client: Client, update):
                     pass
 
 # ---------------- RUN BOT ----------------
+from aiohttp import web
+
+# سيرفر ويب خفيف للرد على Render Health Check
+async def handle_ping(request):
+    return web.Response(text="Bot is Alive and Running!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    app.router.add_get("/health", handle_ping)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    # Render يمرر المنفذ تلقائياً في متغير PORT
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"🌐 Web Server running on port {port}")
+
+# ---------------- RUN BOT & WEB SERVICE ----------------
 async def main():
+    # تشغيل سيرفر الويب أولاً لإرضاء Render
+    await start_web_server()
+    
+    # تشغيل البوت والـ Userbot
     await userbot.start()
     await bot.start()
     print("🚀 Bot and Userbot are online!")
+    
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
