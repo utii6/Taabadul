@@ -1,423 +1,1547 @@
 import asyncio
 import logging
-import sqlite3
 import os
-from pyrogram import Client, filters
-from pyrogram.enums import ChatAction
+import time
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from aiohttp import web
+
+from pyrogram import Client, filters, idle
+from pyrogram.enums import ChatAction, ChatMemberStatus
+from pyrogram.errors import (
+    FloodWait,
+    UserIsBlocked,
+    InputUserDeactivated,
+    PeerIdInvalid,
+    UsernameInvalid,
+    UsernameNotOccupied,
+    UserAlreadyParticipant
+)
+
 from pyrogram.types import (
-    ReplyKeyboardMarkup, 
-    KeyboardButton, 
-    InlineKeyboardMarkup, 
-    InlineKeyboardButton, 
-    Message, 
-    CallbackQuery
+    Message,
+    CallbackQuery,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
 )
 
-# ---------------- CONFIGURATION & ENV VARIABLES ----------------
-API_ID = int(os.environ.get("API_ID", "1234567"))
-API_HASH = os.environ.get("API_HASH", "YOUR_API_HASH")
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
-USERBOT_SESSION = os.environ.get("USERBOT_SESSION", "YOUR_STRING_SESSION")
-ADMIN_ID = int(os.environ.get("ADMIN_ID", "123456789"))
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
 
-logging.basicConfig(level=logging.INFO)
+API_ID = int(os.environ["API_ID"])
+API_HASH = os.environ["API_HASH"]
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+USERBOT_SESSION = os.environ["USERBOT_SESSION"]
+DATABASE_URL = os.environ["DATABASE_URL"]
+ADMIN_ID = int(os.environ["ADMIN_ID"])
 
-# ---------------- DATABASE SETUP ----------------
-conn = sqlite3.connect("bot_data.db", check_same_thread=False)
-cursor = conn.cursor()
+bot = Client(
+    "Bot",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    bot_token=BOT_TOKEN
+)
 
-# الجدول الأول: الإعدادات العامة (القناة الرئيسية، العداد الوهمي)
+userbot = Client(
+    "Userbot",
+    api_id=API_ID,
+    api_hash=API_HASH,
+    session_string=USERBOT_SESSION
+)
+
+db = psycopg2.connect(
+    DATABASE_URL,
+    sslmode="require",
+    cursor_factory=RealDictCursor
+)
+
+db.autocommit = True
+
+cursor = db.cursor()
+
 cursor.execute("""
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
+CREATE TABLE IF NOT EXISTS settings(
+key TEXT PRIMARY KEY,
+value TEXT
 )
 """)
 
-# الجدول الثاني: المستخدمين المسجلين
 cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    user_id INTEGER PRIMARY KEY,
-    username TEXT,
-    full_name TEXT,
-    is_banned INTEGER DEFAULT 0
+CREATE TABLE IF NOT EXISTS users(
+user_id BIGINT PRIMARY KEY,
+username TEXT,
+full_name TEXT,
+is_banned BOOLEAN DEFAULT FALSE,
+join_date TIMESTAMP DEFAULT NOW()
 )
 """)
 
-# الجدول الثالث: القنوات المضافة
 cursor.execute("""
-CREATE TABLE IF NOT EXISTS joined_channels (
-    user_id INTEGER,
-    channel_url TEXT PRIMARY KEY
+CREATE TABLE IF NOT EXISTS channels(
+id SERIAL PRIMARY KEY,
+user_id BIGINT,
+channel TEXT,
+joined_at TIMESTAMP DEFAULT NOW()
 )
 """)
-conn.commit()
 
-# الإعدادات الافتراضية
-cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('main_channel', 'https://t.me/YourDefaultChannel')")
-cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('fake_offset', '37')")
-conn.commit()
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS spam(
+user_id BIGINT PRIMARY KEY,
+messages INTEGER DEFAULT 0,
+last_message BIGINT DEFAULT 0
+)
+""")
 
-# ---------------- CLIENTS INITIALIZATION ----------------
-bot = Client("my_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-userbot = Client("my_userbot", api_id=API_ID, api_hash=API_HASH, session_string=USERBOT_SESSION)
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS broadcasts(
+id SERIAL PRIMARY KEY,
+text TEXT,
+created_at TIMESTAMP DEFAULT NOW()
+)
+""")
 
-# حالات الأدمن المؤقتة للإدخال
+cursor.execute("""
+INSERT INTO settings(key,value)
+VALUES('main_channel','https://t.me/YourChannel')
+ON CONFLICT(key)
+DO NOTHING
+""")
+
+cursor.execute("""
+INSERT INTO settings(key,value)
+VALUES('fake_offset','0')
+ON CONFLICT(key)
+DO NOTHING
+""")
+
 admin_state = {}
+spam_cache = {}
 
-# ---------------- HELPER FUNCTIONS ----------------
-def get_setting(key: str) -> str:
-    cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+# ================= DATABASE FUNCTIONS =================
+
+def get_setting(key: str):
+    cursor.execute(
+        "SELECT value FROM settings WHERE key=%s",
+        (key,)
+    )
     row = cursor.fetchone()
-    return row[0] if row else ""
+    if row:
+        return row["value"]
+    return None
+
 
 def set_setting(key: str, value: str):
-    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
-    conn.commit()
+    cursor.execute(
+        """
+        INSERT INTO settings(key,value)
+        VALUES(%s,%s)
+        ON CONFLICT(key)
+        DO UPDATE SET value=EXCLUDED.value
+        """,
+        (key, value)
+    )
 
-def add_user(user_id: int, username: str, full_name: str) -> bool:
-    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
-    if cursor.fetchone() is None:
-        cursor.execute("INSERT INTO users (user_id, username, full_name) VALUES (?, ?, ?)", (user_id, username, full_name))
-        conn.commit()
-        return True
-    return False
 
-def is_banned(user_id: int) -> bool:
-    cursor.execute("SELECT is_banned FROM users WHERE user_id = ?", (user_id,))
+def add_user(user_id: int, username: str, full_name: str):
+    cursor.execute(
+        "SELECT user_id FROM users WHERE user_id=%s",
+        (user_id,)
+    )
+
+    if cursor.fetchone():
+        return False
+
+    cursor.execute(
+        """
+        INSERT INTO users
+        (
+            user_id,
+            username,
+            full_name
+        )
+        VALUES
+        (
+            %s,
+            %s,
+            %s
+        )
+        """,
+        (
+            user_id,
+            username,
+            full_name
+        )
+    )
+
+    return True
+
+
+def update_user(user_id: int, username: str, full_name: str):
+    cursor.execute(
+        """
+        UPDATE users
+        SET
+        username=%s,
+        full_name=%s
+        WHERE user_id=%s
+        """,
+        (
+            username,
+            full_name,
+            user_id
+        )
+    )
+
+
+def user_exists(user_id: int):
+    cursor.execute(
+        "SELECT user_id FROM users WHERE user_id=%s",
+        (user_id,)
+    )
+
+    return cursor.fetchone() is not None
+
+
+def get_user(user_id: int):
+    cursor.execute(
+        "SELECT * FROM users WHERE user_id=%s",
+        (user_id,)
+    )
+
+    return cursor.fetchone()
+
+
+def get_all_users():
+    cursor.execute(
+        """
+        SELECT *
+        FROM users
+        ORDER BY join_date ASC
+        """
+    )
+
+    return cursor.fetchall()
+
+
+def get_all_user_ids():
+    cursor.execute(
+        """
+        SELECT user_id
+        FROM users
+        WHERE is_banned=FALSE
+        """
+    )
+
+    rows = cursor.fetchall()
+
+    return [x["user_id"] for x in rows]
+
+
+def total_users():
+    cursor.execute(
+        "SELECT COUNT(*) AS c FROM users"
+    )
+
     row = cursor.fetchone()
-    return bool(row[0]) if row else False
 
-def set_ban(user_id: int, ban_status: int):
-    cursor.execute("UPDATE users SET is_banned = ? WHERE user_id = ?", (ban_status, user_id))
-    conn.commit()
+    return row["c"]
 
-def get_total_users_count() -> int:
-    cursor.execute("SELECT COUNT(*) FROM users")
-    real_count = cursor.fetchone()[0]
-    fake_offset = int(get_setting("fake_offset") or 0)
-    return real_count + fake_offset
 
-def save_user_channel(user_id: int, channel: str):
-    cursor.execute("INSERT OR REPLACE INTO joined_channels (user_id, channel_url) VALUES (?, ?)", (user_id, channel))
-    conn.commit()
+def fake_counter():
+    value = get_setting("fake_offset")
 
-def remove_user_channel(user_id: int):
-    cursor.execute("DELETE FROM joined_channels WHERE user_id = ?", (user_id,))
-    conn.commit()
+    if value is None:
+        return 0
 
-def get_user_channel(user_id: int):
-    cursor.execute("SELECT channel_url FROM joined_channels WHERE user_id = ?", (user_id,))
+    return int(value)
+
+
+def total_counter():
+    return total_users() + fake_counter()
+
+
+def ban_user(user_id: int):
+    cursor.execute(
+        """
+        UPDATE users
+        SET is_banned=TRUE
+        WHERE user_id=%s
+        """,
+        (user_id,)
+    )
+
+
+def unban_user(user_id: int):
+    cursor.execute(
+        """
+        UPDATE users
+        SET is_banned=FALSE
+        WHERE user_id=%s
+        """,
+        (user_id,)
+    )
+
+
+def is_banned(user_id: int):
+    cursor.execute(
+        """
+        SELECT is_banned
+        FROM users
+        WHERE user_id=%s
+        """,
+        (user_id,)
+    )
+
     row = cursor.fetchone()
-    return row[0] if row else None
 
-# ---------------- KEYBOARDS ----------------
+    if row is None:
+        return False
+
+    return row["is_banned"]
+
+
+def save_channel(user_id: int, channel: str):
+    cursor.execute(
+        """
+        DELETE FROM channels
+        WHERE user_id=%s
+        """,
+        (user_id,)
+    )
+
+    cursor.execute(
+        """
+        INSERT INTO channels
+        (
+            user_id,
+            channel
+        )
+        VALUES
+        (
+            %s,
+            %s
+        )
+        """,
+        (
+            user_id,
+            channel
+        )
+    )
+
+
+def remove_channel(user_id: int):
+    cursor.execute(
+        """
+        DELETE FROM channels
+        WHERE user_id=%s
+        """,
+        (user_id,)
+    )
+
+
+def get_channel(user_id: int):
+    cursor.execute(
+        """
+        SELECT channel
+        FROM channels
+        WHERE user_id=%s
+        """,
+        (user_id,)
+    )
+
+    row = cursor.fetchone()
+
+    if row:
+        return row["channel"]
+
+    return None
+
+
+def total_channels():
+    cursor.execute(
+        """
+        SELECT COUNT(*) AS c
+        FROM channels
+        """
+    )
+
+    row = cursor.fetchone()
+
+    return row["c"]
+
+
+def log_broadcast(text: str):
+    cursor.execute(
+        """
+        INSERT INTO broadcasts(text)
+        VALUES(%s)
+        """,
+        (text,)
+    )
+
+
+def update_spam(user_id: int):
+    now = int(time.time())
+
+    cursor.execute(
+        """
+        SELECT *
+        FROM spam
+        WHERE user_id=%s
+        """,
+        (user_id,)
+    )
+
+    row = cursor.fetchone()
+
+    if row is None:
+
+        cursor.execute(
+            """
+            INSERT INTO spam
+            (
+                user_id,
+                messages,
+                last_message
+            )
+            VALUES
+            (
+                %s,
+                1,
+                %s
+            )
+            """,
+            (
+                user_id,
+                now
+            )
+        )
+
+        return 1
+
+    if now - row["last_message"] > 10:
+
+        cursor.execute(
+            """
+            UPDATE spam
+            SET
+            messages=1,
+            last_message=%s
+            WHERE user_id=%s
+            """,
+            (
+                now,
+                user_id
+            )
+        )
+
+        return 1
+
+    count = row["messages"] + 1
+
+    cursor.execute(
+        """
+        UPDATE spam
+        SET
+        messages=%s,
+        last_message=%s
+        WHERE user_id=%s
+        """,
+        (
+            count,
+            now,
+            user_id
+        )
+    )
+
+    return count
+
+# ================= ANTI SPAM =================
+
+SPAM_LIMIT = 6
+SPAM_WINDOW = 10
+
+async def anti_spam(message: Message):
+
+    user_id = message.from_user.id
+
+    count = update_spam(user_id)
+
+    if count >= SPAM_LIMIT:
+
+        try:
+            await message.reply_text(
+                "⚠️ يرجى التوقف عن إرسال الرسائل بسرعة والمحاولة بعد قليل."
+            )
+        except Exception:
+            pass
+
+        return False
+
+    return True
+
+
+# ================= KEYBOARDS =================
+
 main_keyboard = ReplyKeyboardMarkup(
     [
-        [KeyboardButton("🎁 الخدمات المجانية")],
-        [KeyboardButton("🛒 شراء خدمات")],
-        [KeyboardButton("💰 رصيد المحاولات"), KeyboardButton("📋 سجل الطلبات")],
-        [KeyboardButton("👥 دعوة صديق")]
+        [
+            KeyboardButton("🎁 الخدمات المجانية")
+        ],
+        [
+            KeyboardButton("🛒 شراء خدمات")
+        ],
+        [
+            KeyboardButton("💰 رصيد المحاولات"),
+            KeyboardButton("📋 سجل الطلبات")
+        ],
+        [
+            KeyboardButton("👥 دعوة صديق")
+        ]
     ],
     resize_keyboard=True
 )
 
-def get_admin_inline_kb():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📢 إرسال إذاعة", callback_data="admin_broadcast"), InlineKeyboardButton("✏️ تغيير القناة الرئيسية", callback_data="admin_change_main")],
-        [InlineKeyboardButton("🔢 تعديل العداد الوهمي", callback_data="admin_change_offset"), InlineKeyboardButton("📊 الإحصائيات", callback_data="admin_stats")],
-        [InlineKeyboardButton("🚫 حظر / فك حظر", callback_data="admin_ban_user")]
-    ])
 
-# ---------------- HANDLERS ----------------
+def admin_keyboard():
 
-# 1. /start Command
-@bot.on_message(filters.command("start") & filters.private)
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "📢 الإذاعة",
+                    callback_data="broadcast"
+                ),
+                InlineKeyboardButton(
+                    "📊 الإحصائيات",
+                    callback_data="stats"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🚫 حظر",
+                    callback_data="ban"
+                ),
+                InlineKeyboardButton(
+                    "✅ فك الحظر",
+                    callback_data="unban"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📢 تغيير القناة",
+                    callback_data="main_channel"
+                ),
+                InlineKeyboardButton(
+                    "🔢 العداد الوهمي",
+                    callback_data="fake_counter"
+                )
+            ]
+        ]
+    )
+
+
+# ================= HELPERS =================
+
+async def safe_send(chat_id, text, **kwargs):
+
+    try:
+
+        return await bot.send_message(
+            chat_id,
+            text,
+            **kwargs
+        )
+
+    except FloodWait as e:
+
+        await asyncio.sleep(e.value)
+
+        return await safe_send(
+            chat_id,
+            text,
+            **kwargs
+        )
+
+    except (
+        UserIsBlocked,
+        InputUserDeactivated,
+        PeerIdInvalid
+    ):
+
+        return None
+
+    except Exception as e:
+
+        logging.exception(e)
+
+        return None
+
+
+async def safe_copy(chat_id, from_chat_id, message_id):
+
+    try:
+
+        return await bot.copy_message(
+            chat_id,
+            from_chat_id,
+            message_id
+        )
+
+    except FloodWait as e:
+
+        await asyncio.sleep(e.value)
+
+        return await safe_copy(
+            chat_id,
+            from_chat_id,
+            message_id
+        )
+
+    except (
+        UserIsBlocked,
+        InputUserDeactivated,
+        PeerIdInvalid
+    ):
+
+        return None
+
+    except Exception as e:
+
+        logging.exception(e)
+
+        return None
+
+
+async def join_channel(channel):
+
+    try:
+
+        chat = await userbot.join_chat(channel)
+
+        return True, chat
+
+    except UserAlreadyParticipant:
+
+        chat = await userbot.get_chat(channel)
+
+        return True, chat
+
+    except (
+        UsernameInvalid,
+        UsernameNotOccupied
+    ):
+
+        return False, "💔الرابط غير صالح."
+
+    except FloodWait as e:
+
+        await asyncio.sleep(e.value)
+
+        return await join_channel(channel)
+
+    except Exception as e:
+
+        return False, str(e)
+
+
+async def leave_channel(channel):
+
+    try:
+
+        await userbot.leave_chat(channel)
+
+        return True
+
+    except FloodWait as e:
+
+        await asyncio.sleep(e.value)
+
+        return await leave_channel(channel)
+
+    except Exception:
+
+        return False
+
+
+async def is_subscribed(user_id):
+
+    channel = get_setting("main_channel")
+
+    if not channel:
+
+        # ================= START =================
+
+@bot.on_message(filters.private & filters.command("start"))
 async def start_handler(client: Client, message: Message):
-    if is_banned(message.from_user.id):
-        return await message.reply_text("❌ أنت محظور من استخدام البوت.")
-
-    await message.react("✨")
-    
-    # محاكاة جارٍ الكتابة
-    await client.send_chat_action(message.chat.id, ChatAction.TYPING)
-    await asyncio.sleep(1.5)
 
     user_id = message.from_user.id
-    username = message.from_user.username or "لا يوجد"
-    full_name = message.from_user.first_name + (f" {message.from_user.last_name}" if message.from_user.last_name else "")
-    
-    # تسجيل العضو الجديد وإرسال إشعار للمالك
-    is_new = add_user(user_id, username, full_name)
-    if is_new:
-        total_count = get_total_users_count()
-        notify_msg = (
-            f"👾 **شخص جديد دخل البوت**\n\n"
-            f"👤 **معلومات العضو الجديد:**\n"
-            f"• **الاسم:** {full_name}\n"
-            f"• **المعرف:** @{username}\n"
-            f"• **الآيدي:** `{user_id}`\n\n"
-            f"📊 **إجمالي المستخدمين:** {total_count}"
+
+    if is_banned(user_id):
+
+        return await message.reply_text(
+            "🚫 تم حظرك من استخدام البوت."
         )
+
+    if not await anti_spam(message):
+        return
+
+    username = message.from_user.username or ""
+
+    full_name = message.from_user.first_name
+
+    if message.from_user.last_name:
+        full_name += f" {message.from_user.last_name}"
+
+    if not user_exists(user_id):
+
+        add_user(
+            user_id,
+            username,
+            full_name
+        )
+
         try:
-            await client.send_message(ADMIN_ID, notify_msg)
+
+            await safe_send(
+                ADMIN_ID,
+                f"""
+👤 مستخدم جديد
+
+الاسم :
+{full_name}
+
+المعرف :
+@{username}
+
+الآيدي :
+{user_id}
+
+إجمالي المستخدمين :
+{total_counter()}
+"""
+            )
+
         except Exception:
             pass
 
-    main_ch = get_setting("main_channel")
-    welcome_text = (
-        f"أهلاً بك يا {message.from_user.first_name} 👋\n\n"
-        f"📢 القناة المطلوب الاشتراك بها أولاً:\n{main_ch}\n\n"
-        f"أرسل رابط أو معرف قناتك الآن ليتم الاشتراك فيها تلقائياً! 🚀"
-    )
-    
-    await message.reply_text(welcome_text, reply_markup=main_keyboard, disable_web_page_preview=True)
+    else:
 
-# 2. /admin Command
-@bot.on_message(filters.command("admin") & filters.private)
-async def admin_cmd(client: Client, message: Message):
+        update_user(
+            user_id,
+            username,
+            full_name
+        )
+
+    if not await is_subscribed(user_id):
+
+        channel = get_setting("main_channel")
+
+        kb = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "📢 الاشتراك",
+                        url=channel
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "✅ تحقق",
+                        callback_data="check_join"
+                    )
+                ]
+            ]
+        )
+
+        return await message.reply_text(
+            "يجب الاشتراك في القناة أولاً.",
+            reply_markup=kb,
+            disable_web_page_preview=True
+        )
+
+    await client.send_chat_action(
+        message.chat.id,
+        ChatAction.TYPING
+    )
+
+    await asyncio.sleep(1)
+
+    await message.reply_text(
+        f"""أهلاً بك {message.from_user.first_name} 🌹
+
+يمكنك الآن استخدام جميع خدمات البوت.
+
+اختر الخدمة المطلوبة من القائمة.""",
+        reply_markup=main_keyboard
+    )
+
+
+@bot.on_callback_query(filters.regex("^check_join$"))
+async def check_join_callback(
+    client: Client,
+    query: CallbackQuery
+):
+
+    if await is_subscribed(query.from_user.id):
+
+        await query.answer(
+            "تم التحقق بنجاح ✅",
+            show_alert=True
+        )
+
+        await query.message.edit_text(
+            "✅ تم التحقق من الاشتراك.\n\nأرسل /start للمتابعة."
+        )
+
+    else:
+
+        await query.answer(
+            "لم تشترك بعد.",
+            show_alert=True
+        )
+
+        # ================= ADMIN =================
+
+@bot.on_message(filters.private & filters.command("admin"))
+async def admin_panel(client: Client, message: Message):
+
     if message.from_user.id != ADMIN_ID:
         return
-    
-    await client.send_chat_action(message.chat.id, ChatAction.TYPING)
-    await asyncio.sleep(1)
-    
-    await message.reply_text("⚙️ **أهلاً بك في لوحة تحكم المالك:**", reply_markup=get_admin_inline_kb())
 
-# 3. Handle Keyboard Buttons & Text Responses
-@bot.on_message(filters.private & filters.text & ~filters.command(["start", "admin"]))
-async def text_handler(client: Client, message: Message):
-    if is_banned(message.from_user.id):
+    await client.send_chat_action(
+        message.chat.id,
+        ChatAction.TYPING
+    )
+
+    await asyncio.sleep(1)
+
+    await message.reply_text(
+        "⚙️ لوحة تحكم الأدمن",
+        reply_markup=admin_keyboard()
+    )
+
+
+@bot.on_callback_query(filters.regex("^stats$"))
+async def stats_callback(
+    client: Client,
+    query: CallbackQuery
+):
+
+    if query.from_user.id != ADMIN_ID:
+        return await query.answer(
+            "غير مصرح.",
+            show_alert=True
+        )
+
+    text = f"""
+📊 الإحصائيات
+
+👤 المستخدمون :
+{total_users()}
+
+➕ العداد الوهمي :
+{fake_counter()}
+
+📈 الإجمالي :
+{total_counter()}
+
+📢 القنوات :
+{total_channels()}
+"""
+
+    await query.answer()
+
+    await query.message.edit_text(
+        text,
+        reply_markup=admin_keyboard()
+    )
+
+
+@bot.on_callback_query(filters.regex("^broadcast$"))
+async def broadcast_callback(
+    client: Client,
+    query: CallbackQuery
+):
+
+    if query.from_user.id != ADMIN_ID:
         return
 
+    admin_state[ADMIN_ID] = "broadcast"
+
+    await query.answer()
+
+    await query.message.reply_text(
+        "📢 أرسل الرسالة المراد إذاعتها."
+    )
+
+
+@bot.on_callback_query(filters.regex("^ban$"))
+async def ban_callback(
+    client: Client,
+    query: CallbackQuery
+):
+
+    if query.from_user.id != ADMIN_ID:
+        return
+
+    admin_state[ADMIN_ID] = "ban"
+
+    await query.answer()
+
+    await query.message.reply_text(
+        "أرسل ID المستخدم لحظره."
+    )
+
+
+@bot.on_callback_query(filters.regex("^unban$"))
+async def unban_callback(
+    client: Client,
+    query: CallbackQuery
+):
+
+    if query.from_user.id != ADMIN_ID:
+        return
+
+    admin_state[ADMIN_ID] = "unban"
+
+    await query.answer()
+
+    await query.message.reply_text(
+        "أرسل ID المستخدم لفك الحظر."
+    )
+
+
+@bot.on_callback_query(filters.regex("^main_channel$"))
+async def channel_callback(
+    client: Client,
+    query: CallbackQuery
+):
+
+    if query.from_user.id != ADMIN_ID:
+        return
+
+    admin_state[ADMIN_ID] = "main_channel"
+
+    await query.answer()
+
+    await query.message.reply_text(
+        "أرسل رابط القناة الرئيسية الجديد."
+    )
+
+
+@bot.on_callback_query(filters.regex("^fake_counter$"))
+async def fake_counter_callback(
+    client: Client,
+    query: CallbackQuery
+):
+
+    if query.from_user.id != ADMIN_ID:
+        return
+
+    admin_state[ADMIN_ID] = "fake_counter"
+
+    await query.answer()
+
+    await query.message.reply_text(
+        "أرسل قيمة العداد الوهمي."
+    )
+
+    
+
+        return True
+
+    username = channel.replace(
+        "https://t.me/",
+        ""
+    ).replace(
+        "@",
+        ""
+    )
+
+    try:
+
+        member = await bot.get_chat_member(
+            username,
+            user_id
+        )
+
+        if member.status in (
+            ChatMemberStatus.MEMBER,
+            ChatMemberStatus.ADMINISTRATOR,
+            ChatMemberStatus.OWNER
+        ):
+            return True
+
+    except Exception:
+        pass
+
+    return False
+# ================= ADMIN STATES =================
+
+@bot.on_message(filters.private & ~filters.command(["start", "admin"]))
+async def admin_states_handler(client: Client, message: Message):
+
     user_id = message.from_user.id
+
+    if user_id != ADMIN_ID:
+        return
+
+    if user_id not in admin_state:
+        return
+
+    state = admin_state.pop(user_id)
+
+    # ================= BROADCAST =================
+
+    if state == "broadcast":
+
+        users = get_all_user_ids()
+
+        success = 0
+        failed = 0
+
+        wait = await message.reply_text(
+            "⏳ جاري إرسال الإذاعة..."
+        )
+
+        log_broadcast(
+            message.text or "[MEDIA]"
+        )
+
+        for target in users:
+
+            try:
+
+                await safe_copy(
+                    target,
+                    message.chat.id,
+                    message.id
+                )
+
+                success += 1
+
+                await asyncio.sleep(0.05)
+
+            except Exception:
+
+                failed += 1
+
+        await wait.edit_text(
+            f"""
+✅ انتهت الإذاعة
+
+🟢 نجح الإرسال:
+{success}
+
+🔴 فشل الإرسال:
+{failed}
+"""
+        )
+
+        return
+
+    # ================= BAN =================
+
+    if state == "ban":
+
+        try:
+
+            target = int(message.text)
+
+        except Exception:
+
+            return await message.reply_text(
+                "ID غير صحيح."
+            )
+
+        if not user_exists(target):
+
+            return await message.reply_text(
+                "المستخدم غير موجود."
+            )
+
+        ban_user(target)
+
+        await message.reply_text(
+            "✅ تم الحظر."
+        )
+
+        await safe_send(
+            target,
+            "🚫 تم حظرك من استخدام البوت."
+        )
+
+        return
+
+    # ================= UNBAN =================
+
+    if state == "unban":
+
+        try:
+
+            target = int(message.text)
+
+        except Exception:
+
+            return await message.reply_text(
+                "ID غير صحيح."
+            )
+
+        if not user_exists(target):
+
+            return await message.reply_text(
+                "المستخدم غير موجود."
+            )
+
+        unban_user(target)
+
+        await message.reply_text(
+            "✅ تم فك الحظر."
+        )
+
+        await safe_send(
+            target,
+            "✅ تم فك الحظر ويمكنك استخدام البوت مرة أخرى."
+        )
+
+        return
+
+    # ================= MAIN CHANNEL =================
+
+    if state == "main_channel":
+
+        channel = message.text.strip()
+
+        set_setting(
+            "main_channel",
+            channel
+        )
+
+        await message.reply_text(
+            f"✅ تم تغيير القناة الرئيسية إلى:\n{channel}"
+        )
+
+        return
+
+    # ================= FAKE COUNTER =================
+
+    if state == "fake_counter":
+
+        if not message.text.isdigit():
+
+            return await message.reply_text(
+                "أرسل رقماً فقط."
+            )
+
+        set_setting(
+            "fake_offset",
+            message.text
+        )
+
+        await message.reply_text(
+            f"✅ تم تحديث العداد الوهمي إلى {message.text}"
+        )
+
+        return
+# ================= USER HANDLER =================
+
+@bot.on_message(
+    filters.private &
+    filters.text &
+    ~filters.command(["start", "admin"])
+)
+async def user_handler(client: Client, message: Message):
+
+    user_id = message.from_user.id
+
+    if user_id == ADMIN_ID and user_id in admin_state:
+        return
+
+    if is_banned(user_id):
+        return
+
+    if not await anti_spam(message):
+        return
+
+    if not await is_subscribed(user_id):
+
+        channel = get_setting("main_channel")
+
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "📢 الاشتراك",
+                        url=channel
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "✅ تحقق",
+                        callback_data="check_join"
+                    )
+                ]
+            ]
+        )
+
+        return await message.reply_text(
+            "يجب الاشتراك أولاً.",
+            reply_markup=keyboard
+        )
+
     text = message.text.strip()
 
-    # معالجة إدخالات لوحة الأدمن
-    if user_id == ADMIN_ID and user_id in admin_state:
-        state = admin_state.pop(user_id)
-        
-        if state == "awaiting_main_channel":
-            set_setting("main_channel", text)
-            await message.reply_text(f"✅ تم تحديث القناة الرئيسية إلى:\n{text}")
-            return
-            
-        elif state == "awaiting_fake_offset":
-            if text.isdigit():
-                set_setting("fake_offset", text)
-                await message.reply_text(f"✅ تم تعديل العداد الوهمي إلى: {text}")
-            else:
-                await message.reply_text("⚠️ يرجى إدخال رقم صحيح فقط.")
-            return
+    # ================= الخدمات المجانية =================
 
-        elif state == "awaiting_broadcast":
-            cursor.execute("SELECT user_id FROM users WHERE is_banned = 0")
-            all_users = cursor.fetchall()
-            success, failed = 0, 0
-            
-            await message.reply_text("⏳ جاري إرسال الإذاعة...")
-            for row in all_users:
-                u_id = row[0]
-                try:
-                    await message.copy(u_id)
-                    success += 1
-                    await asyncio.sleep(0.05)
-                except Exception:
-                    failed += 1
-            
-            await message.reply_text(
-                f"✅ **تم الانتهاء من الإذاعة!**\n\n"
-                f"🟢 الناجحين: {success}\n"
-                f"🔴 الفاشلين: {failed}"
-            )
-            return
-
-        elif state == "awaiting_ban":
-            try:
-                target_id = int(text)
-                set_ban(target_id, 1)
-                await message.reply_text(f"✅ تم حظر المستخدم `{target_id}` بنجاح.")
-            except ValueError:
-                await message.reply_text("⚠️ آيدي غير صالح.")
-            return
-
-    # الأزرار الرئيسية
     if text == "🎁 الخدمات المجانية":
-        await message.react("🎁")
-        await client.send_chat_action(message.chat.id, ChatAction.TYPING)
-        await asyncio.sleep(1)
-        return await message.reply_text("أرسل رابط أو يوزر قناتك لتشترك بها خدماتنا المجانية!")
 
-    elif text == "🛒 شراء خدمات":
-        await message.react("🛒")
-        await client.send_chat_action(message.chat.id, ChatAction.TYPING)
-        await asyncio.sleep(1)
-        return await message.reply_text("لشراء الخدمات التواصل مع الدعم الفني.")
+        return await message.reply_text(
+            "أرسل رابط القناة أو معرفها (@username)."
+        )
 
-    elif text == "💰 رصيد المحاولات":
-        await client.send_chat_action(message.chat.id, ChatAction.TYPING)
-        await asyncio.sleep(1)
-        return await message.reply_text("💰 رصيدك الحالي: 5 محاولات جديدة.")
+    # ================= شراء خدمات =================
 
-    elif text == "📋 سجل الطلبات":
-        await client.send_chat_action(message.chat.id, ChatAction.TYPING)
-        await asyncio.sleep(1)
-        return await message.reply_text("📋 لا توجد طلبات معلقة حالياً.")
+    if text == "🛒 شراء خدمات":
 
-    elif text == "👥 دعوة صديق":
-        await client.send_chat_action(message.chat.id, ChatAction.TYPING)
-        await asyncio.sleep(1)
-        return await message.reply_text(f"🔗 رابط الدعوة الخاص بك:\n`https://t.me/{(await client.get_me()).username}?start={user_id}`")
+        return await message.reply_text(
+            "راسل الدعم الفني لشراء الخدمات."
+        )
 
-    # معالجة إضافة القنوات (الاشتراك التلقائي عبر الـ Userbot)
-    if "t.me/" in text or text.startswith("@"):
-        await message.react("⏳")
-        await client.send_chat_action(message.chat.id, ChatAction.TYPING)
-        
+    # ================= الرصيد =================
+
+    if text == "💰 رصيد المحاولات":
+
+        return await message.reply_text(
+            "رصيدك الحالي : 5 محاولات."
+        )
+
+    # ================= السجل =================
+
+    if text == "📋 سجل الطلبات":
+
+        return await message.reply_text(
+            "لا يوجد أي طلب حالياً."
+        )
+
+    # ================= الدعوة =================
+
+    if text == "👥 دعوة صديق":
+
+        me = await bot.get_me()
+
+        return await message.reply_text(
+            f"https://t.me/{me.username}?start={user_id}"
+        )
+
+    # ================= رابط قناة =================
+
+    if (
+        text.startswith("@")
+        or
+        text.startswith("https://t.me/")
+        or
+        text.startswith("http://t.me/")
+        or
+        text.startswith("t.me/")
+    ):
+
+        wait = await message.reply_text(
+            "⏳ جارٍ الانضمام..."
+        )
+
+        ok, result = await join_channel(text)
+
+        if not ok:
+
+            return await wait.edit_text(
+                f"❌ فشل الانضمام.\n\n{result}"
+            )
+
+        save_channel(
+            user_id,
+            text
+        )
+
         try:
-            # الحساب الشخصي ينضم للقناة
-            chat = await userbot.join_chat(text)
-            save_user_channel(user_id, text)
-            
-            await message.react("🎉")
-            await message.reply_text(
-                f"✅ **تم الاشتراك في قناتك بنجاح!**\n\n"
-                f"📌 **اسم القناة:** `{chat.title}`\n"
-                f"🤝 تم الانضمام بواسطة حسابنا المخصص."
+
+            title = result.title
+
+        except Exception:
+
+            title = text
+
+        await wait.edit_text(
+            f"""✅ تم الانضمام بنجاح.
+
+📢 القناة :
+{title}
+"""
+        )
+
+        await safe_send(
+            ADMIN_ID,
+            f"""📥 قناة جديدة
+
+👤 المستخدم :
+{message.from_user.mention}
+
+🆔 :
+{user_id}
+
+📢 :
+{text}
+
+✅ تم الانضمام بواسطة Userbot.
+"""
+        )
+
+        return
+
+    await message.reply_text(
+        "الرجاء اختيار أحد الخيارات أو إرسال رابط قناة."
+    )
+
+# ================= MEMBER UPDATE =================
+
+@bot.on_chat_member_updated()
+async def member_update_handler(client, update):
+
+    try:
+
+        main_channel = get_setting("main_channel")
+
+        if not main_channel:
+            return
+
+        username = (
+            main_channel
+            .replace("https://t.me/", "")
+            .replace("http://t.me/", "")
+            .replace("@", "")
+            .strip()
+        )
+
+        if not update.chat:
+            return
+
+        if (update.chat.username or "").lower() != username.lower():
+            return
+
+        if not update.old_chat_member:
+            return
+
+        if not update.new_chat_member:
+            return
+
+        old_status = update.old_chat_member.status
+        new_status = update.new_chat_member.status
+
+        if old_status == ChatMemberStatus.LEFT:
+            return
+
+        if new_status != ChatMemberStatus.LEFT:
+            return
+
+        user = update.new_chat_member.user
+
+        if not user:
+            return
+
+        user_id = user.id
+
+        channel = get_channel(user_id)
+
+        if not channel:
+            return
+
+        success = await leave_channel(channel)
+
+        if success:
+
+            remove_channel(user_id)
+
+            try:
+
+                await safe_send(
+                    user_id,
+                    f"""⚠️ لقد غادرت القناة الرئيسية.
+
+لذلك غادر الـ Userbot قناتك تلقائياً:
+
+{channel}
+"""
+                )
+
+            except Exception:
+                pass
+
+            try:
+
+                await safe_send(
+                    ADMIN_ID,
+                    f"""🚨 مغادرة القناة الرئيسية
+
+👤 المستخدم:
+{user.mention}
+
+🆔:
+{user_id}
+
+📢 القناة:
+
+{channel}
+
+✅ تمت المغادرة بواسطة الـ Userbot.
+"""
+                )
+
+            except Exception:
+                pass
+
+    except Exception as e:
+
+        logging.exception(e)
+        # ================= WEB SERVER =================
+
+async def health(request):
+    return web.Response(
+        text="Bot is running."
+    )
+
+
+async def start_web():
+
+    app = web.Application()
+
+    app.router.add_get("/", health)
+    app.router.add_get("/health", health)
+
+    runner = web.AppRunner(app)
+
+    await runner.setup()
+
+    port = int(
+        os.getenv(
+            "PORT",
+            "10000"
+        )
+    )
+
+    site = web.TCPSite(
+        runner,
+        "0.0.0.0",
+        port
+    )
+
+    await site.start()
+
+    logging.info(
+        f"Web Server Started : {port}"
+    )
+
+
+# ================= START CLIENTS =================
+
+async def start_clients():
+
+    while True:
+
+        try:
+
+            await userbot.start()
+
+            logging.info(
+                "Userbot Started."
             )
-            
-            # إشعار للمالك
-            admin_log = (
-                f"📥 **تم إضافة قناة جديدة!**\n\n"
-                f"👤 **المستخدم:** {message.from_user.mention} (`{user_id}`)\n"
-                f"📢 **القناة:** {chat.title} ({text})\n"
-                f"🤝 **الحالة:** تم الانضمام بنجاح."
+
+            break
+
+        except FloodWait as e:
+
+            logging.warning(
+                f"FloodWait {e.value}"
             )
-            await client.send_message(ADMIN_ID, admin_log)
+
+            await asyncio.sleep(
+                e.value
+            )
 
         except Exception as e:
-            await message.react("❌")
-            await message.reply_text(f"❌ **عذراً، تعذر الانضمام للقناة:**\n`{str(e)}`")
 
-# 4. Callback Query Handler (لوحة الأدمن)
-@bot.on_callback_query()
-async def callback_handler(client: Client, query: CallbackQuery):
-    if query.from_user.id != ADMIN_ID:
-        return await query.answer("⚠️ غير مصرح لك.", show_alert=True)
-        
-    data = query.data
-    user_id = query.from_user.id
+            logging.exception(e)
 
-    if data == "admin_stats":
-        cursor.execute("SELECT COUNT(*) FROM users")
-        real_users = cursor.fetchone()[0]
-        fake_offset = int(get_setting("fake_offset") or 0)
-        cursor.execute("SELECT COUNT(*) FROM joined_channels")
-        channels_count = cursor.fetchone()[0]
+            await asyncio.sleep(5)
 
-        stats_text = (
-            f"📊 **الإحصائيات المباشرة:**\n\n"
-            f"• المستخدمين الحقيقيين: {real_users}\n"
-            f"• العداد الوهمي المضاف: {fake_offset}\n"
-            f"• **المجموع الكلي:** {real_users + fake_offset}\n"
-            f"• القنوات المشترك بها: {channels_count}"
-        )
-        await query.answer()
-        await query.message.edit_text(stats_text, reply_markup=get_admin_inline_kb())
+    while True:
 
-    elif data == "admin_change_main":
-        admin_state[user_id] = "awaiting_main_channel"
-        await query.answer()
-        await query.message.reply_text("✏️ أرسل الآن رابط القناة الرئيسية الجديد:")
+        try:
 
-    elif data == "admin_change_offset":
-        admin_state[user_id] = "awaiting_fake_offset"
-        await query.answer()
-        await query.message.reply_text("🔢 أرسل الآن رقم العداد الوهمي الجديد (مثال: 50):")
+            await bot.start()
 
-    elif data == "admin_broadcast":
-        admin_state[user_id] = "awaiting_broadcast"
-        await query.answer()
-        await query.message.reply_text("📢 أرسل الآن الرسالة (نص، صورة، أو توجيه) لإرسالها للجميع:")
+            logging.info(
+                "Bot Started."
+            )
 
-    elif data == "admin_ban_user":
-        admin_state[user_id] = "awaiting_ban"
-        await query.answer()
-        await query.message.reply_text("🚫 أرسل آيدي (ID) المستخدم المراد حظره:")
+            break
 
-# 5. متابعة خروج المستخدم ومغادرة القناة التلقائية
-@bot.on_chat_member_updated()
-async def member_update_handler(client: Client, update):
-    main_ch = get_setting("main_channel")
-    # إذا كانت القناة هي القناة الرئيسية وتم رصد مغادرة
-    if update.chat and main_ch in (update.chat.username or ""):
-        if update.old_chat_member and update.new_chat_member.status.value == "left":
-            user = update.old_chat_member.user
-            user_id = user.id
-            
-            user_ch = get_user_channel(user_id)
-            if user_ch:
-                try:
-                    # يغادر الـ Userbot من قناة المستخدم
-                    await userbot.leave_chat(user_ch)
-                    remove_user_channel(user_id)
-                except Exception:
-                    pass
+        except FloodWait as e:
 
-                # تنبيه للمستخدم
-                try:
-                    await client.send_message(
-                        user_id, 
-                        f"⚠️ **تنبيه:** لاحظنا مغادرتك لقناتنا الرئيسية، وبناءً عليه قام حسابنا بالمغادرة من قناتك (`{user_ch}`)."
-                    )
-                except Exception:
-                    pass
+            logging.warning(
+                f"FloodWait {e.value}"
+            )
 
-                # تنبيه للمالك
-                admin_alert = (
-                    f"🚨 **تنبيه مغادرة!**\n\n"
-                    f"👤 **المستخدم:** {user.mention} (`{user_id}`)\n"
-                    f"📢 **قد غادر القناة الرئيسية.**\n"
-                    f"⚙️ **الإجراء:** تم المغادرة من قناته ({user_ch}) وإشعاره."
-                )
-                try:
-                    await client.send_message(ADMIN_ID, admin_alert)
-                except Exception:
-                    pass
+            await asyncio.sleep(
+                e.value
+            )
 
-# ---------------- RUN BOT ----------------
-from aiohttp import web
+        except Exception as e:
 
-# سيرفر ويب خفيف للرد على Render Health Check
-async def handle_ping(request):
-    return web.Response(text="Bot is Alive and Running!")
+            logging.exception(e)
 
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/", handle_ping)
-    app.router.add_get("/health", handle_ping)
-    
-    runner = web.AppRunner(app)
-    await runner.setup()
-    
-    # Render يمرر المنفذ تلقائياً في متغير PORT
-    port = int(os.environ.get("PORT", 8080))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    print(f"🌐 Web Server running on port {port}")
+            await asyncio.sleep(5)
 
-# ---------------- RUN BOT & WEB SERVICE ----------------
+
+# ================= STOP CLIENTS =================
+
+async def stop_clients():
+
+    try:
+        await bot.stop()
+    except Exception:
+        pass
+
+    try:
+        await userbot.stop()
+    except Exception:
+        pass
+
+
+# ================= MAIN =================
+
 async def main():
-    # تشغيل سيرفر الويب أولاً لإرضاء Render
-    await start_web_server()
-    
-    # تشغيل البوت والـ Userbot
-    await userbot.start()
-    await bot.start()
-    print("🚀 Bot and Userbot are online!")
-    
-    await asyncio.Event().wait()
+
+    await start_web()
+
+    await start_clients()
+
+    logging.info(
+        "Project Started Successfully."
+    )
+
+    await idle()
+
+    await stop_clients()
+
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
+
+    asyncio.run(
+        main()
+    )
+
