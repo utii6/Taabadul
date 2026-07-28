@@ -46,14 +46,16 @@ bot = Client(
     "Bot",
     api_id=API_ID,
     api_hash=API_HASH,
-    bot_token=BOT_TOKEN
+    bot_token=BOT_TOKEN,
+    in_memory=True
 )
 
 userbot = Client(
     "Userbot",
     api_id=API_ID,
     api_hash=API_HASH,
-    session_string=USERBOT_SESSION
+    session_string=USERBOT_SESSION,
+    in_memory=True
 )
 
 # ================= DATABASE CONNECTION =================
@@ -690,41 +692,23 @@ async def start_web():
 
 # ================= START CLIENTS =================
 
-async def start_clients():
-    while True:
-        try:
-            await userbot.start()
-            logging.info("Userbot Started.")
-            break
-        except FloodWait as e:
-            logging.warning(f"FloodWait {e.value}")
-            await asyncio.sleep(e.value)
-        except Exception as e:
-            logging.exception(e)
-            await asyncio.sleep(5)
-
-    while True:
-        try:
-            if not bot.is_connected:
-                await bot.start()
-            logging.info("Bot Started.")
-            break
-        except FloodWait as e:
-            logging.warning(f"FloodWait {e.value}")
-            await asyncio.sleep(e.value)
-        except Exception as e:
-            logging.exception(e)
-            await asyncio.sleep(5)
-
-# ================= MAIN RUNNER =================
-
 async def main():
     await start_web()
-    await start_clients()
+    
+    await userbot.start()
+    logging.info("Userbot Started.")
+    
+    await bot.start()
+    logging.info("Bot Started.")
+    
     logging.info("Project Started Successfully.")
     await idle()
-    await bot.stop()
-    await userbot.stop()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    loop = asyncio.get_event_loop()
+    try:
+        loop.run_until_complete(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        loop.run_until_complete(asyncio.gather(bot.stop(), userbot.stop(), return_exceptions=True))
