@@ -123,7 +123,7 @@ CREATE TABLE IF NOT EXISTS spam(
 
 cursor.execute("""
 INSERT INTO settings(key,value)
-VALUES('main_channel','https://t.me/YourChannel')
+VALUES('main_channel','https://t.me/KKEK2')
 ON CONFLICT(key) DO NOTHING
 """)
 
