@@ -12,7 +12,8 @@ from pyrogram.errors import (
     FloodWait,
     UserAlreadyParticipant,
     UsernameInvalid,
-    UsernameNotOccupied
+    UsernameNotOccupied,
+    UserNotParticipant
 )
 
 from pyrogram.types import (
@@ -80,6 +81,7 @@ CREATE TABLE IF NOT EXISTS users(
 )
 """)
 
+# إنشاء جدول القنوات مع ضمان وجود UNIQUE Constraint
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS channels(
     id SERIAL PRIMARY KEY,
@@ -88,6 +90,12 @@ CREATE TABLE IF NOT EXISTS channels(
     joined_at TIMESTAMP DEFAULT NOW()
 )
 """)
+
+# تعديل تلقائي للجدول في حال كان موجوداً سابقاً بدون UNIQUE
+try:
+    cursor.execute("ALTER TABLE channels ADD CONSTRAINT unique_user_id UNIQUE (user_id);")
+except Exception:
+    pass  # موجود مسبقاً
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS spam(
@@ -142,13 +150,9 @@ def is_banned(user_id: int):
 
 
 def save_channel(user_id: int, channel: str):
+    cursor.execute("DELETE FROM channels WHERE user_id=%s", (user_id,))
     cursor.execute(
-        """
-        INSERT INTO channels (user_id, channel)
-        VALUES (%s, %s)
-        ON CONFLICT (user_id)
-        DO UPDATE SET channel=EXCLUDED.channel, joined_at=NOW()
-        """,
+        "INSERT INTO channels (user_id, channel) VALUES (%s, %s)",
         (user_id, channel)
     )
 
@@ -165,7 +169,7 @@ def get_channel(user_id: int):
 
 def update_spam(user_id: int):
     now = int(time.time())
-    cursor.execute("SELECT * FROM spam WHERE user_id=%s", (user_id,))
+    cursor.execute("SELECT messages, last_message FROM spam WHERE user_id=%s", (user_id,))
     row = cursor.fetchone()
 
     if row is None:
@@ -185,7 +189,7 @@ def update_spam(user_id: int):
     count = row["messages"] + 1
     cursor.execute(
         "UPDATE spam SET messages=%s, last_message=%s WHERE user_id=%s",
-        (count, now)
+        (count, now, user_id)
     )
     return count
 
@@ -217,7 +221,11 @@ async def safe_send(chat_id, text, **kwargs):
         return None
 
 
-async def join_channel(channel):
+async def join_channel(channel: str):
+    channel = channel.strip()
+    if "t.me/" in channel and not ("/+" in channel or "joinchat" in channel):
+        channel = channel.split("t.me/")[-1].replace("@", "").split("/")[0]
+
     try:
         chat = await userbot.join_chat(channel)
         return True, chat
@@ -246,19 +254,21 @@ async def leave_channel(channel):
 
 async def is_subscribed(user_id):
     channel = get_setting("main_channel")
-    
     if not channel or "YourChannel" in channel:
         return True
-
-    username = channel.replace("https://t.me/", "").replace("http://t.me/", "").replace("@", "").strip()
 
     if user_id == ADMIN_ID:
         return True
 
+    username = channel.replace("https://t.me/", "").replace("http://t.me/", "").replace("@", "").strip()
+
     try:
-        member = await bot.get_chat_member(f"@{username}", user_id)
+        # استخدام الـ Userbot للتحقق لتفادي طلب صليحات المشرف
+        member = await userbot.get_chat_member(f"@{username}", user_id)
         if member.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
             return True
+    except UserNotParticipant:
+        return False
     except Exception as e:
         logging.error(f"Subscription Check Error for @{username}: {e}")
         return True
@@ -271,10 +281,7 @@ async def is_subscribed(user_id):
 async def start_handler(client: Client, message: Message):
     user_id = message.from_user.id
 
-    if is_banned(user_id):
-        return await message.reply_text("🚫 تم حظرك من استخدام البوت.")
-
-    if not await anti_spam(message):
+    if is_banned(user_id) or not await anti_spam(message):
         return
 
     username = message.from_user.username or ""
@@ -339,7 +346,6 @@ async def channel_exchange_handler(client: Client, message: Message):
 
     text = message.text.strip()
 
-    # فحص صيغة الرابط أو المعرف
     if any(text.startswith(prefix) for prefix in ["@", "https://t.me/", "http://t.me/", "t.me/"]):
         wait_msg = await message.reply_text("⏳ جارٍ الانضمام إلى قناتك وتأكيد التبادل...")
         
@@ -348,15 +354,12 @@ async def channel_exchange_handler(client: Client, message: Message):
         if not ok:
             return await wait_msg.edit_text(f"❌ **فشل عملية الانضمام!**\n\n السبب: {result}")
 
-        # حفظ القناة
         save_channel(user_id, text)
         title = getattr(result, 'title', text)
 
-        # جلب معلومات الـ Userbot للزر الشفاف
         userbot_me = await userbot.get_me()
         userbot_link = f"https://t.me/{userbot_me.username}" if userbot_me.username else f"tg://user?id={userbot_me.id}"
 
-        # تجهيز الأزرار الشفافة التفاعلية (Inline Keyboard)
         formatted_channel = text if text.startswith("http") else f"https://t.me/{text.replace('@', '')}"
         exchange_buttons = InlineKeyboardMarkup(
             [
@@ -365,7 +368,6 @@ async def channel_exchange_handler(client: Client, message: Message):
             ]
         )
 
-        # رسالة النجاح للمستخدم
         await wait_msg.edit_text(
             f"🎉 **تم التبادل بنجاح!**\n\n"
             f"📌 **القناة:** {title}\n"
@@ -375,7 +377,6 @@ async def channel_exchange_handler(client: Client, message: Message):
             disable_web_page_preview=True
         )
 
-        # إشعار مالك البوت (ADMIN)
         admin_text = (
             f"🔔 **عملية تبادل جديدة**\n\n"
             f"👤 **المستخدم:** {message.from_user.mention}\n"
@@ -407,7 +408,6 @@ async def member_update_handler(client, update):
         old_status = update.old_chat_member.status
         new_status = update.new_chat_member.status
 
-        # اكتشاف مغادرة المستخدم للقناة الرئيسية
         if old_status in (ChatMemberStatus.MEMBER, ChatMemberStatus.RESTRICTED) and new_status == ChatMemberStatus.LEFT:
             user = update.new_chat_member.user
             if not user:
@@ -418,19 +418,16 @@ async def member_update_handler(client, update):
             if not channel:
                 return
 
-            # مغادرة الـ Userbot من قناة المستخدم
             success = await leave_channel(channel)
             if success:
                 remove_channel(user_id)
                 
-                # 1. إرسال رسالة المغادرة للمستخدم
                 await safe_send(
                     user_id, 
                     f"⚠️ **تنبيه إلغاء التبادل!**\n\n"
                     f"لقد قمت بالمغادرة من القناة الرئيسية، لذا قام الحساب بالمغادرة تلقائياً من قناتك:\n{channel}"
                 )
                 
-                # 2. إرسال رسالة المغادرة للمالك (ADMIN)
                 await safe_send(
                     ADMIN_ID, 
                     f"🚨 **إلغاء تبادل (مغادرة)**\n\n"
@@ -462,16 +459,32 @@ async def start_web():
 
 # ================= MAIN RUNNER =================
 
+async def safe_start_client(client: Client, name: str):
+    while True:
+        try:
+            await client.start()
+            logging.info(f"{name} Started Successfully.")
+            break
+        except FloodWait as e:
+            logging.warning(f"⚠️ Telegram FloodWait for {name}: Must wait {e.value} seconds.")
+            await asyncio.sleep(e.value + 2)
+        except Exception as e:
+            logging.error(f"❌ Error starting {name}: {e}")
+            raise e
+
+async def safe_stop_client(client: Client, name: str):
+    if getattr(client, "is_connected", False):
+        try:
+            await client.stop()
+            logging.info(f"{name} Stopped.")
+        except Exception as e:
+            logging.warning(f"Error stopping {name}: {e}")
+
 async def main():
     await start_web()
-    
-    await userbot.start()
-    logging.info("Userbot Started.")
-    
-    await bot.start()
-    logging.info("Bot Started.")
-    
-    logging.info("Project Started Successfully.")
+    await safe_start_client(userbot, "Userbot")
+    await safe_start_client(bot, "Bot")
+    logging.info("🚀 All Services Started Successfully.")
     await idle()
 
 if __name__ == "__main__":
@@ -481,4 +494,10 @@ if __name__ == "__main__":
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
-        loop.run_until_complete(asyncio.gather(bot.stop(), userbot.stop(), return_exceptions=True))
+        loop.run_until_complete(
+            asyncio.gather(
+                safe_stop_client(bot, "Bot"),
+                safe_stop_client(userbot, "Userbot"),
+                return_exceptions=True
+            )
+        )
