@@ -1,4 +1,6 @@
 import asyncio
+asyncio.set_event_loop(asyncio.new_event_loop())
+
 import logging
 import os
 import time
@@ -267,7 +269,7 @@ def update_spam(user_id: int):
     count = row["messages"] + 1
     cursor.execute(
         "UPDATE spam SET messages=%s, last_message=%s WHERE user_id=%s",
-        (count, now, user_id)
+        (count, now)
     )
     return count
 
