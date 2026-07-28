@@ -1,6 +1,4 @@
 import asyncio
-asyncio.set_event_loop(asyncio.new_event_loop())
-
 import logging
 import os
 import time
@@ -26,15 +24,16 @@ from pyrogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
     InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    Update
+    InlineKeyboardButton
 )
 
+# ================= LOGGING SETUP =================
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
+# ================= ENVIRONMENT VARIABLES =================
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 BOT_TOKEN = os.environ["BOT_TOKEN"]
@@ -42,6 +41,7 @@ USERBOT_SESSION = os.environ["USERBOT_SESSION"]
 DATABASE_URL = os.environ["DATABASE_URL"]
 ADMIN_ID = int(os.environ["ADMIN_ID"])
 
+# ================= PYROGRAM CLIENTS =================
 bot = Client(
     "Bot",
     api_id=API_ID,
@@ -56,69 +56,68 @@ userbot = Client(
     session_string=USERBOT_SESSION
 )
 
+# ================= DATABASE CONNECTION =================
 db = psycopg2.connect(
     DATABASE_URL,
     sslmode="require",
     cursor_factory=RealDictCursor
 )
-
 db.autocommit = True
 cursor = db.cursor()
 
+# ================= DATABASE TABLES INITIALIZATION =================
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS settings(
-key TEXT PRIMARY KEY,
-value TEXT
+    key TEXT PRIMARY KEY,
+    value TEXT
 )
 """)
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users(
-user_id BIGINT PRIMARY KEY,
-username TEXT,
-full_name TEXT,
-is_banned BOOLEAN DEFAULT FALSE,
-join_date TIMESTAMP DEFAULT NOW()
+    user_id BIGINT PRIMARY KEY,
+    username TEXT,
+    full_name TEXT,
+    is_banned BOOLEAN DEFAULT FALSE,
+    join_date TIMESTAMP DEFAULT NOW()
 )
 """)
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS channels(
-id SERIAL PRIMARY KEY,
-user_id BIGINT,
-channel TEXT,
-joined_at TIMESTAMP DEFAULT NOW()
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT,
+    channel TEXT,
+    joined_at TIMESTAMP DEFAULT NOW()
 )
 """)
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS spam(
-user_id BIGINT PRIMARY KEY,
-messages INTEGER DEFAULT 0,
-last_message BIGINT DEFAULT 0
+    user_id BIGINT PRIMARY KEY,
+    messages INTEGER DEFAULT 0,
+    last_message BIGINT DEFAULT 0
 )
 """)
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS broadcasts(
-id SERIAL PRIMARY KEY,
-text TEXT,
-created_at TIMESTAMP DEFAULT NOW()
+    id SERIAL PRIMARY KEY,
+    text TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
 )
 """)
 
 cursor.execute("""
 INSERT INTO settings(key,value)
 VALUES('main_channel','https://t.me/YourChannel')
-ON CONFLICT(key)
-DO NOTHING
+ON CONFLICT(key) DO NOTHING
 """)
 
 cursor.execute("""
 INSERT INTO settings(key,value)
 VALUES('fake_offset','0')
-ON CONFLICT(key)
-DO NOTHING
+ON CONFLICT(key) DO NOTHING
 """)
 
 admin_state = {}
@@ -279,7 +278,6 @@ async def anti_spam(message: Message):
         return False
     return True
 
-
 # ================= KEYBOARDS =================
 
 main_keyboard = ReplyKeyboardMarkup(
@@ -311,7 +309,6 @@ def admin_keyboard():
         ]
     )
 
-
 # ================= HELPERS =================
 
 async def safe_send(chat_id, text, **kwargs):
@@ -342,7 +339,7 @@ async def join_channel(channel):
         chat = await userbot.get_chat(channel)
         return True, chat
     except (UsernameInvalid, UsernameNotOccupied):
-        return False, "💔الرابط غير صالح."
+        return False, "💔 الرابط غير صالح."
     except FloodWait as e:
         await asyncio.sleep(e.value)
         return await join_channel(channel)
@@ -382,7 +379,7 @@ async def is_subscribed(user_id):
 
     return False
 
-# ================= START =================
+# ================= START COMMAND =================
 
 @bot.on_message(filters.private & filters.command("start"))
 async def start_handler(client: Client, message: Message):
@@ -395,7 +392,7 @@ async def start_handler(client: Client, message: Message):
         return
 
     username = message.from_user.username or ""
-    full_name = message.from_user.first_name
+    full_name = message.from_user.first_name or ""
     if message.from_user.last_name:
         full_name += f" {message.from_user.last_name}"
 
@@ -440,7 +437,7 @@ async def check_join_callback(client: Client, query: CallbackQuery):
     else:
         await query.answer("لم تشترك بعد.", show_alert=True)
 
-# ================= ADMIN =================
+# ================= ADMIN PANEL =================
 
 @bot.on_message(filters.private & filters.command("admin"))
 async def admin_panel(client: Client, message: Message):
@@ -505,7 +502,7 @@ async def fake_counter_callback(client: Client, query: CallbackQuery):
     await query.answer()
     await query.message.reply_text("أرسل قيمة العداد الوهمي.")
 
-# ================= ADMIN STATES =================
+# ================= ADMIN STATES HANDLER =================
 
 @bot.on_message(filters.private & ~filters.command(["start", "admin"]))
 async def admin_states_handler(client: Client, message: Message):
@@ -575,7 +572,7 @@ async def admin_states_handler(client: Client, message: Message):
         await message.reply_text(f"✅ تم تحديث العداد الوهمي إلى {message.text}")
         return
 
-# ================= USER HANDLER =================
+# ================= USER MESSAGES HANDLER =================
 
 @bot.on_message(filters.private & filters.text & ~filters.command(["start", "admin"]))
 async def user_handler(client: Client, message: Message):
@@ -633,7 +630,7 @@ async def user_handler(client: Client, message: Message):
 
     await message.reply_text("الرجاء اختيار أحد الخيارات أو إرسال رابط قناة.")
 
-# ================= MEMBER UPDATE =================
+# ================= MEMBER UPDATE HANDLER =================
 
 @bot.on_chat_member_updated()
 async def member_update_handler(client, update):
@@ -673,29 +670,15 @@ async def member_update_handler(client, update):
     except Exception as e:
         logging.exception(e)
 
-# ================= WEB SERVER & WEBHOOK HANDLER =================
-
-# ================= WEB SERVER & WEBHOOK HANDLER =================
+# ================= WEB SERVER =================
 
 async def health(request):
     return web.Response(text="Bot is running.")
-
-async def webhook_handler(request):
-    try:
-        data = await request.json()
-        # التعديل الصحيح لمكتبة Pyrogram:
-        update = Update.de_json(bot, data)
-        if update:
-            await bot.dispatcher.feed_update(bot, update)
-    except Exception as e:
-        logging.error(f"Webhook Feed Error: {e}")
-    return web.Response(text="OK")
 
 async def start_web():
     app = web.Application()
     app.router.add_get("/", health)
     app.router.add_get("/health", health)
-    app.router.add_post("/", webhook_handler)
 
     runner = web.AppRunner(app)
     await runner.setup()
@@ -733,27 +716,15 @@ async def start_clients():
             logging.exception(e)
             await asyncio.sleep(5)
 
-# ================= STOP CLIENTS =================
-
-async def stop_clients():
-    try:
-        await bot.stop()
-    except Exception:
-        pass
-    try:
-        await userbot.stop()
-    except Exception:
-        pass
-
-# ================= MAIN =================
+# ================= MAIN RUNNER =================
 
 async def main():
     await start_web()
     await start_clients()
     logging.info("Project Started Successfully.")
     await idle()
-    await stop_clients()
+    await bot.stop()
+    await userbot.stop()
 
 if __name__ == "__main__":
-    import pyrogram.raw
     asyncio.run(main())
