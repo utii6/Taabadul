@@ -282,7 +282,7 @@ async def join_channel(channel: str):
         await asyncio.sleep(e.value)
         return await join_channel(channel)
     except Exception as e:
-        return False, f"تعذر الانضمام: {str(e)}"
+        return False, f"❌تعذر الانضمام: {str(e)}"
 
 
 async def leave_channel(channel):
@@ -476,7 +476,6 @@ async def start_handler(client: Client, message: Message):
         "✨ **أرسل الآن رابط قناتك** أو المعرف الخاص بها بالشكل التالي:\n"
         "▫️ `@YourChannel` \n"
         "▫️ `https://t.me/YourChannel`\n\n"
-        "ليقوم حساب البوت بالانضمام إليها مباشرة!"
     )
 
 
@@ -559,8 +558,8 @@ async def channel_exchange_handler(client: Client, message: Message):
         
         exchange_buttons = InlineKeyboardMarkup(
             [
-                [create_styled_button("👤 حساب الاشتراك (Userbot)", url=userbot_link)],
-                [create_styled_button("📢 قناتك المقبولة في التبادل", url=formatted_channel)]
+                [create_styled_button("👤(Userbot)", url=userbot_link)],
+                [create_styled_button("📢 قناتك الجميله", url=formatted_channel)]
             ]
         )
 
