@@ -708,7 +708,8 @@ async def start_clients():
 
     while True:
         try:
-            await bot.start()
+            if not bot.is_connected:
+                await bot.start()
             # إزالة أي Webhook علق سابقاً في تليجرام للعودة إلى Long Polling
             await bot.invoke(pyrogram.raw.functions.bots.DeleteWebhook(drop_pending_updates=True))
             logging.info("Bot Started.")
