@@ -1,4 +1,4 @@
-https://github.com/kurachy/pyrogram/archive/dev.zip
+pyrogram==2.0.106
 tgcrypto==1.2.5
 aiohttp
 psycopg2-binary
