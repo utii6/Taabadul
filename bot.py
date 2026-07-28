@@ -1,13 +1,15 @@
 import asyncio
 import logging
 import os
+import random
 import time
+from datetime import datetime
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from aiohttp import web
 
 from pyrogram import Client, filters, idle
-from pyrogram.enums import ChatAction, ChatMemberStatus
+from pyrogram.enums import ChatMemberStatus
 from pyrogram.errors import (
     FloodWait,
     UserAlreadyParticipant,
@@ -19,8 +21,7 @@ from pyrogram.errors import (
 from pyrogram.types import (
     Message,
     CallbackQuery,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton
+    InlineKeyboardMarkup
 )
 
 # ================= LOGGING SETUP =================
@@ -36,6 +37,12 @@ BOT_TOKEN = os.environ["BOT_TOKEN"]
 USERBOT_SESSION = os.environ["USERBOT_SESSION"]
 DATABASE_URL = os.environ["DATABASE_URL"]
 ADMIN_ID = int(os.environ["ADMIN_ID"])
+
+# قائمة الإيموجيات للتفاعلات العشوائية
+REACTION_EMOJIS = ["👍", "❤️", "🔥", "🎉", "⚡", "👏", "😍", "🌟"]
+
+# حالات الأدمن
+ADMIN_STATES = {}
 
 # ================= PYROGRAM CLIENTS =================
 bot = Client(
@@ -53,6 +60,21 @@ userbot = Client(
     session_string=USERBOT_SESSION,
     in_memory=True
 )
+
+# ================= HELPER FOR COLORED BUTTONS (BOT API 9.4) =================
+def create_styled_button(text: str, url: str = None, callback_data: str = None, style: str = None):
+    """
+    إنشاء زر يدعم ميزة الألوان (style) طبقاً لتحديث Bot API 9.4
+    الخيارات: 'primary' (أزرق), 'success' (أخضر), 'danger' (أحمر)
+    """
+    btn = {"text": text}
+    if url:
+        btn["url"] = url
+    if callback_data:
+        btn["callback_data"] = callback_data
+    if style in ["primary", "success", "danger"]:
+        btn["style"] = style
+    return btn
 
 # ================= DATABASE CONNECTION =================
 db = psycopg2.connect(
@@ -81,7 +103,6 @@ CREATE TABLE IF NOT EXISTS users(
 )
 """)
 
-# إنشاء جدول القنوات مع ضمان وجود UNIQUE Constraint
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS channels(
     id SERIAL PRIMARY KEY,
@@ -91,11 +112,10 @@ CREATE TABLE IF NOT EXISTS channels(
 )
 """)
 
-# تعديل تلقائي للجدول في حال كان موجوداً سابقاً بدون UNIQUE
 try:
     cursor.execute("ALTER TABLE channels ADD CONSTRAINT unique_user_id UNIQUE (user_id);")
 except Exception:
-    pass  # موجود مسبقاً
+    pass
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS spam(
@@ -149,6 +169,13 @@ def is_banned(user_id: int):
     return row["is_banned"] if row else False
 
 
+def set_ban_status(user_id: int, banned: bool):
+    cursor.execute(
+        "UPDATE users SET is_banned=%s WHERE user_id=%s",
+        (banned, user_id)
+    )
+
+
 def save_channel(user_id: int, channel: str):
     cursor.execute("DELETE FROM channels WHERE user_id=%s", (user_id,))
     cursor.execute(
@@ -165,6 +192,19 @@ def get_channel(user_id: int):
     cursor.execute("SELECT channel FROM channels WHERE user_id=%s", (user_id,))
     row = cursor.fetchone()
     return row["channel"] if row else None
+
+
+def get_stats():
+    cursor.execute("SELECT COUNT(*) as total_users FROM users;")
+    users_count = cursor.fetchone()["total_users"]
+    cursor.execute("SELECT COUNT(*) as total_channels FROM channels;")
+    channels_count = cursor.fetchone()["total_channels"]
+    return users_count, channels_count
+
+
+def get_all_users():
+    cursor.execute("SELECT user_id FROM users WHERE is_banned=FALSE;")
+    return [row["user_id"] for row in cursor.fetchall()]
 
 
 def update_spam(user_id: int):
@@ -209,7 +249,16 @@ async def anti_spam(message: Message):
         return False
     return True
 
-# ================= HELPERS =================
+# ================= HELPERS & REACTIONS =================
+
+async def add_random_reaction(chat_id: int, message_id: int):
+    """إضافة تفاعل عشوائي على رسالة المستخدم"""
+    try:
+        random_emoji = random.choice(REACTION_EMOJIS)
+        await bot.send_reaction(chat_id, message_id, random_emoji)
+    except Exception as e:
+        logging.debug(f"Reaction error: {e}")
+
 
 async def safe_send(chat_id, text, **kwargs):
     try:
@@ -263,7 +312,6 @@ async def is_subscribed(user_id):
     username = channel.replace("https://t.me/", "").replace("http://t.me/", "").replace("@", "").strip()
 
     try:
-        # استخدام الـ Userbot للتحقق لتفادي طلب صليحات المشرف
         member = await userbot.get_chat_member(f"@{username}", user_id)
         if member.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
             return True
@@ -275,6 +323,127 @@ async def is_subscribed(user_id):
 
     return False
 
+# ================= ADMIN PANEL HANDLERS =================
+
+def get_admin_keyboard():
+    return InlineKeyboardMarkup(
+        [
+            [
+                create_styled_button("📊 إحصائيات البوت", callback_data="admin_stats", style="primary"),
+                create_styled_button("⚙️ القناة الرئيسية", callback_data="admin_set_channel", style="primary")
+            ],
+            [
+                create_styled_button("📢 إذاعة للمستخدمين", callback_data="admin_broadcast", style="success"),
+                create_styled_button("🚫 إدارة الحظر", callback_data="admin_ban_menu", style="danger")
+            ],
+            [
+                create_styled_button("❌ إغلاق اللوحة", callback_data="admin_close")
+            ]
+        ]
+    )
+
+
+@bot.on_message(filters.private & filters.command("admin"))
+async def admin_panel_cmd(client: Client, message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    await message.reply_text(
+        "🛠️ **مرحباً بك في لوحة تحكم المالك**\n\nاختر من القائمة أدناه الإجراء المطلوب:",
+        reply_markup=get_admin_keyboard()
+    )
+
+
+@bot.on_callback_query(filters.regex("^admin_"))
+async def admin_callbacks(client: Client, query: CallbackQuery):
+    if query.from_user.id != ADMIN_ID:
+        return await query.answer("❌ لا تملك صلاحية الوصول.", show_alert=True)
+
+    data = query.data
+
+    if data == "admin_stats":
+        u_count, c_count = get_stats()
+        await query.answer()
+        await query.message.edit_text(
+            f"📊 **إحصائيات البوت الحالية:**\n\n"
+            f"👤 **إجمالي المستخدمين:** `{u_count}`\n"
+            f"🔄 **إجمالي التبادلات النشطة:** `{c_count}`",
+            reply_markup=InlineKeyboardMarkup([[create_styled_button("🔙 العودة للوحة", callback_data="admin_home", style="primary")]])
+        )
+
+    elif data == "admin_set_channel":
+        ADMIN_STATES[ADMIN_ID] = "WAITING_FOR_MAIN_CHANNEL"
+        current_ch = get_setting("main_channel")
+        await query.answer()
+        await query.message.edit_text(
+            f"⚙️ **تغيير القناة الرئيسية:**\n\n"
+            f"📌 القناة الحالية: `{current_ch}`\n\n"
+            f"💬 أرسل الآن الرابط الجديد للقناة الرئيسية (أو ارسل /cancel للإلغاء):",
+            reply_markup=InlineKeyboardMarkup([[create_styled_button("🔙 العودة", callback_data="admin_home")]])
+        )
+
+    elif data == "admin_broadcast":
+        ADMIN_STATES[ADMIN_ID] = "WAITING_FOR_BROADCAST"
+        await query.answer()
+        await query.message.edit_text(
+            "📢 **إرسال إذاعة لجميع المستخدمين:**\n\n"
+            "قم بإرسال النص أو الرسالة التي تريد إذاعتها الآن (أو ارسل /cancel للإلغاء):",
+            reply_markup=InlineKeyboardMarkup([[create_styled_button("🔙 العودة", callback_data="admin_home")]])
+        )
+
+    elif data == "admin_ban_menu":
+        await query.answer()
+        await query.message.edit_text(
+            "🚫 **إدارة الحظر:**\n\n"
+            "لحظر مستخدم أرسل: `/ban USER_ID`\n"
+            "لفك حظر مستخدم أرسل: `/unban USER_ID`",
+            reply_markup=InlineKeyboardMarkup([[create_styled_button("🔙 العودة", callback_data="admin_home", style="primary")]])
+        )
+
+    elif data == "admin_home":
+        ADMIN_STATES.pop(ADMIN_ID, None)
+        await query.answer()
+        await query.message.edit_text(
+            "🛠️ **مرحباً بك في لوحة تحكم المالك**\n\nاختر من القائمة أدناه الإجراء المطلوب:",
+            reply_markup=get_admin_keyboard()
+        )
+
+    elif data == "admin_close":
+        ADMIN_STATES.pop(ADMIN_ID, None)
+        await query.answer("تم الإغلاق")
+        await query.message.delete()
+
+
+@bot.on_message(filters.private & filters.command("ban"))
+async def ban_user_cmd(client: Client, message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    try:
+        target_id = int(message.text.split()[1])
+        set_ban_status(target_id, True)
+        await message.reply_text(f"✅ تم حظر المستخدم `{target_id}` بنجاح.")
+    except Exception:
+        await message.reply_text("⚠️ استخدام خاطئ. الصيغة الصحيحة: `/ban 123456789`")
+
+
+@bot.on_message(filters.private & filters.command("unban"))
+async def unban_user_cmd(client: Client, message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    try:
+        target_id = int(message.text.split()[1])
+        set_ban_status(target_id, False)
+        await message.reply_text(f"✅ تم فك حظر المستخدم `{target_id}` بنجاح.")
+    except Exception:
+        await message.reply_text("⚠️ استخدام خاطئ. الصيغة الصحيحة: `/unban 123456789`")
+
+
+@bot.on_message(filters.private & filters.command("cancel"))
+async def cancel_admin_state(client: Client, message: Message):
+    if message.from_user.id == ADMIN_ID and ADMIN_ID in ADMIN_STATES:
+        ADMIN_STATES.pop(ADMIN_ID, None)
+        await message.reply_text("✅ تم إلغاء العملية والعودة للوضع الطبيعي.")
+
 # ================= START COMMAND =================
 
 @bot.on_message(filters.private & filters.command("start"))
@@ -283,6 +452,9 @@ async def start_handler(client: Client, message: Message):
 
     if is_banned(user_id) or not await anti_spam(message):
         return
+
+    # تفاعل عشوائي على رسالة Start
+    asyncio.create_task(add_random_reaction(message.chat.id, message.id))
 
     username = message.from_user.username or ""
     full_name = message.from_user.first_name or ""
@@ -295,8 +467,8 @@ async def start_handler(client: Client, message: Message):
         channel = get_setting("main_channel")
         kb = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("📢 قناة التبادل الرئيسية", url=channel)],
-                [InlineKeyboardButton("✅ تحقق من الاشتراك", callback_data="check_join")]
+                [create_styled_button("📢 قناة التبادل الرئيسية", url=channel, style="primary")],
+                [create_styled_button("✅ تحقق من الاشتراك", callback_data="check_join", style="success")]
             ]
         )
         return await message.reply_text(
@@ -325,21 +497,50 @@ async def check_join_callback(client: Client, query: CallbackQuery):
     else:
         await query.answer("❌ لم تشترك بعد في القناة الرئيسية!", show_alert=True)
 
-# ================= USER CHANNEL HANDLER =================
+# ================= USER CHANNEL HANDLER & ADMIN PROCESSES =================
 
-@bot.on_message(filters.private & filters.text & ~filters.command(["start", "admin"]))
+@bot.on_message(filters.private & filters.text)
 async def channel_exchange_handler(client: Client, message: Message):
     user_id = message.from_user.id
 
+    # معالجة إدخالات لوحة الأدمن (تغيير القناة أو الإذاعة)
+    if user_id == ADMIN_ID and user_id in ADMIN_STATES:
+        state = ADMIN_STATES[user_id]
+        
+        if state == "WAITING_FOR_MAIN_CHANNEL":
+            new_channel = message.text.strip()
+            set_setting("main_channel", new_channel)
+            ADMIN_STATES.pop(ADMIN_ID, None)
+            return await message.reply_text(f"✅ تم تحديث القناة الرئيسية بنجاح إلى:\n{new_channel}")
+
+        elif state == "WAITING_FOR_BROADCAST":
+            ADMIN_STATES.pop(ADMIN_ID, None)
+            all_u = get_all_users()
+            sent, failed = 0, 0
+            msg = await message.reply_text(f"⏳ جارٍ الإذاعة إلى {len(all_u)} مستخدم...")
+            
+            for u in all_u:
+                try:
+                    await message.copy(u)
+                    sent += 1
+                    await asyncio.sleep(0.05)
+                except Exception:
+                    failed += 1
+
+            return await msg.edit_text(f"🎉 **تمت الإذاعة بنجاح!**\n\n✅ المستلمون: `{sent}`\n❌ الفاشلون: `{failed}`")
+
     if is_banned(user_id) or not await anti_spam(message):
         return
+
+    # تفاعل عشوائي على رسالة المستخدم
+    asyncio.create_task(add_random_reaction(message.chat.id, message.id))
 
     if not await is_subscribed(user_id):
         channel = get_setting("main_channel")
         keyboard = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("📢 قناة التبادل الرئيسية", url=channel)],
-                [InlineKeyboardButton("✅ تحقق من الاشتراك", callback_data="check_join")]
+                [create_styled_button("📢 قناة التبادل الرئيسية", url=channel, style="primary")],
+                [create_styled_button("✅ تحقق من الاشتراك", callback_data="check_join", style="success")]
             ]
         )
         return await message.reply_text("⚠️ يرجى الاشتراك في القناة الرئيسية أولاً.", reply_markup=keyboard)
@@ -357,20 +558,27 @@ async def channel_exchange_handler(client: Client, message: Message):
         save_channel(user_id, text)
         title = getattr(result, 'title', text)
 
+        # استخراج وقت والتاريخ الحالي بالثواني
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         userbot_me = await userbot.get_me()
         userbot_link = f"https://t.me/{userbot_me.username}" if userbot_me.username else f"tg://user?id={userbot_me.id}"
 
         formatted_channel = text if text.startswith("http") else f"https://t.me/{text.replace('@', '')}"
+        
+        # أزرار شفافة ملونة بتحديث Bot API 9.4
         exchange_buttons = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("👤 حساب الاشتراك (Userbot)", url=userbot_link)],
-                [InlineKeyboardButton("📢 قناتك المقبولة في التبادل", url=formatted_channel)]
+                [create_styled_button("👤 حساب الاشتراك (Userbot)", url=userbot_link, style="primary")],
+                [create_styled_button("📢 قناتك المقبولة في التبادل", url=formatted_channel, style="success")]
             ]
         )
 
+        # رسالة النجاح متضمنة تاريخ ووقت الاشتراك بالثواني
         await wait_msg.edit_text(
             f"🎉 **تم التبادل بنجاح!**\n\n"
             f"📌 **القناة:** {title}\n"
+            f"⏰ **وقت الاشتراك:** `{now_str}`\n"
             f"✅ انضم الحساب المخصص إلى قناتك بنجاح.\n\n"
             f"👇 يمكنك استخدام الأزرار أدناه لمعاينة التفاصيل:",
             reply_markup=exchange_buttons,
@@ -382,6 +590,7 @@ async def channel_exchange_handler(client: Client, message: Message):
             f"👤 **المستخدم:** {message.from_user.mention}\n"
             f"🆔 **الآيدي:** `{user_id}`\n"
             f"📢 **القناة:** {text}\n"
+            f"⏰ **الوقت:** `{now_str}`\n"
             f"⚡️ **النتيجة:** تم الانضمام بنجاح بواسطة Userbot."
         )
         await safe_send(ADMIN_ID, admin_text)
