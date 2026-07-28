@@ -26,7 +26,8 @@ from pyrogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
     InlineKeyboardMarkup,
-    InlineKeyboardButton
+    InlineKeyboardButton,
+    Update
 )
 
 logging.basicConfig(
@@ -672,16 +673,24 @@ async def member_update_handler(client, update):
     except Exception as e:
         logging.exception(e)
 
-# ================= WEB SERVER (KEEP-ALIVE ONLY) =================
+# ================= WEB SERVER & WEBHOOK HANDLER =================
 
 async def health(request):
     return web.Response(text="Bot is running.")
+
+async def webhook_handler(request):
+    try:
+        data = await request.json()
+        await bot.feed_update(Update.de_json(bot, data))
+    except Exception as e:
+        logging.error(f"Webhook Feed Error: {e}")
+    return web.Response(text="OK")
 
 async def start_web():
     app = web.Application()
     app.router.add_get("/", health)
     app.router.add_get("/health", health)
-    app.router.add_post("/", health)  # للرد بـ 200 OK وتفادي خطأ 405
+    app.router.add_post("/", webhook_handler)
 
     runner = web.AppRunner(app)
     await runner.setup()
@@ -718,6 +727,7 @@ async def start_clients():
         except Exception as e:
             logging.exception(e)
             await asyncio.sleep(5)
+
 # ================= STOP CLIENTS =================
 
 async def stop_clients():
