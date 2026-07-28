@@ -26,8 +26,7 @@ from pyrogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
     InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    Update
+    InlineKeyboardButton
 )
 
 logging.basicConfig(
@@ -673,26 +672,16 @@ async def member_update_handler(client, update):
     except Exception as e:
         logging.exception(e)
 
-# ================= WEB SERVER & WEBHOOK =================
+# ================= WEB SERVER (KEEP-ALIVE ONLY) =================
 
 async def health(request):
     return web.Response(text="Bot is running.")
-
-async def web_handle_webhook(request):
-    """معالجة التحديثات القادمة من تليجرام عبر POST"""
-    try:
-        data = await request.json()
-        update = Update.de_json(bot, data)
-        await bot.dispatcher.feed_update(bot, update)
-    except Exception as e:
-        logging.error(f"Error handling webhook: {e}")
-    return web.Response(text="OK")
 
 async def start_web():
     app = web.Application()
     app.router.add_get("/", health)
     app.router.add_get("/health", health)
-    app.router.add_post("/", web_handle_webhook)
+    app.router.add_post("/", health)  # للرد بـ 200 OK وتفادي خطأ 405
 
     runner = web.AppRunner(app)
     await runner.setup()
@@ -717,10 +706,11 @@ async def start_clients():
             logging.exception(e)
             await asyncio.sleep(5)
 
-    # تشغيل البوت بدون استقبال الرسائل تلقائياً عبر Polling
     while True:
         try:
             await bot.start()
+            # إزالة أي Webhook علق سابقاً في تليجرام للعودة إلى Long Polling
+            await bot.invoke(pyrogram.raw.functions.bots.DeleteWebhook(drop_pending_updates=True))
             logging.info("Bot Started.")
             break
         except FloodWait as e:
@@ -729,14 +719,6 @@ async def start_clients():
         except Exception as e:
             logging.exception(e)
             await asyncio.sleep(5)
-
-    # ضبط الـ Webhook تلقائياً مع رابط Render
-    render_url = os.getenv("RENDER_EXTERNAL_URL", "https://taabadul.onrender.com")
-    try:
-        await bot.set_webhook(url=render_url)
-        logging.info(f"Webhook set successfully to {render_url}")
-    except Exception as e:
-        logging.error(f"Failed to set Webhook: {e}")
 
 # ================= STOP CLIENTS =================
 
@@ -760,4 +742,5 @@ async def main():
     await stop_clients()
 
 if __name__ == "__main__":
+    import pyrogram.raw
     asyncio.run(main())
