@@ -26,7 +26,8 @@ from pyrogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
     InlineKeyboardMarkup,
-    InlineKeyboardButton
+    InlineKeyboardButton,
+    Update
 )
 
 logging.basicConfig(
@@ -363,24 +364,19 @@ async def leave_channel(channel):
 async def is_subscribed(user_id):
     channel = get_setting("main_channel")
     
-    # إذا لم تكن القناة محددة أو ما زالت افتراضية، يتجاوز الفحص
     if not channel or "YourChannel" in channel:
         return True
 
-    # استخراج معرف القناة (username) بدون الرابط أو العلامات
     username = channel.replace("https://t.me/", "").replace("http://t.me/", "").replace("@", "").strip()
 
-    # إذا كان المستخدم هو الأدمن، لا داعي لفحص اشتراكه
     if user_id == ADMIN_ID:
         return True
 
     try:
-        # استخدام المعرف @username مباشرة بدلاً من الآيدي الرقمي
         member = await bot.get_chat_member(f"@{username}", user_id)
         if member.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
             return True
     except Exception as e:
-        # في حال حدوث أي خطأ في الفحص (مثل عدم التعرف على القناة)، اسمح للمستخدم بالدخول لتجنب تعطل البوت
         logging.error(f"Subscription Check Error for @{username}: {e}")
         return True
 
@@ -677,15 +673,26 @@ async def member_update_handler(client, update):
     except Exception as e:
         logging.exception(e)
 
-# ================= WEB SERVER =================
+# ================= WEB SERVER & WEBHOOK =================
 
 async def health(request):
     return web.Response(text="Bot is running.")
+
+async def web_handle_webhook(request):
+    """معالجة التحديثات القادمة من تليجرام عبر POST"""
+    try:
+        data = await request.json()
+        update = Update.de_json(bot, data)
+        await bot.dispatcher.feed_update(bot, update)
+    except Exception as e:
+        logging.error(f"Error handling webhook: {e}")
+    return web.Response(text="OK")
 
 async def start_web():
     app = web.Application()
     app.router.add_get("/", health)
     app.router.add_get("/health", health)
+    app.router.add_post("/", web_handle_webhook)
 
     runner = web.AppRunner(app)
     await runner.setup()
@@ -710,6 +717,7 @@ async def start_clients():
             logging.exception(e)
             await asyncio.sleep(5)
 
+    # تشغيل البوت بدون استقبال الرسائل تلقائياً عبر Polling
     while True:
         try:
             await bot.start()
@@ -721,6 +729,14 @@ async def start_clients():
         except Exception as e:
             logging.exception(e)
             await asyncio.sleep(5)
+
+    # ضبط الـ Webhook تلقائياً مع رابط Render
+    render_url = os.getenv("RENDER_EXTERNAL_URL", "https://taabadul.onrender.com")
+    try:
+        await bot.set_webhook(url=render_url)
+        logging.info(f"Webhook set successfully to {render_url}")
+    except Exception as e:
+        logging.error(f"Failed to set Webhook: {e}")
 
 # ================= STOP CLIENTS =================
 
