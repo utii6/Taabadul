@@ -710,8 +710,6 @@ async def start_clients():
         try:
             if not bot.is_connected:
                 await bot.start()
-            # إزالة أي Webhook علق سابقاً في تليجرام للعودة إلى Long Polling
-            await bot.invoke(pyrogram.raw.functions.bots.DeleteWebhook(drop_pending_updates=True))
             logging.info("Bot Started.")
             break
         except FloodWait as e:
@@ -720,7 +718,6 @@ async def start_clients():
         except Exception as e:
             logging.exception(e)
             await asyncio.sleep(5)
-
 # ================= STOP CLIENTS =================
 
 async def stop_clients():
