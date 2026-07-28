@@ -363,18 +363,25 @@ async def leave_channel(channel):
 async def is_subscribed(user_id):
     channel = get_setting("main_channel")
     
-    # تجاوز الفحص إذا كانت القناة غير معينة أو لا تزال بالاسم الافتراضي
+    # إذا لم تكن القناة محددة أو ما زالت افتراضية، يتجاوز الفحص
     if not channel or "YourChannel" in channel:
         return True
 
+    # استخراج معرف القناة (username) بدون الرابط أو العلامات
     username = channel.replace("https://t.me/", "").replace("http://t.me/", "").replace("@", "").strip()
 
+    # إذا كان المستخدم هو الأدمن، لا داعي لفحص اشتراكه
+    if user_id == ADMIN_ID:
+        return True
+
     try:
-        member = await bot.get_chat_member(username, user_id)
+        # استخدام المعرف @username مباشرة بدلاً من الآيدي الرقمي
+        member = await bot.get_chat_member(f"@{username}", user_id)
         if member.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
             return True
     except Exception as e:
-        logging.error(f"Subscription Check Error: {e}")
+        # في حال حدوث أي خطأ في الفحص (مثل عدم التعرف على القناة)، اسمح للمستخدم بالدخول لتجنب تعطل البوت
+        logging.error(f"Subscription Check Error for @{username}: {e}")
         return True
 
     return False
