@@ -108,7 +108,7 @@ created_at TIMESTAMP DEFAULT NOW()
 
 cursor.execute("""
 INSERT INTO settings(key,value)
-VALUES('main_channel','https://t.me/KKEK2')
+VALUES('main_channel','https://t.me/YourChannel')
 ON CONFLICT(key)
 DO NOTHING
 """)
@@ -121,7 +121,6 @@ DO NOTHING
 """)
 
 admin_state = {}
-spam_cache = {}
 
 # ================= DATABASE FUNCTIONS =================
 
@@ -172,16 +171,6 @@ def update_user(user_id: int, username: str, full_name: str):
 def user_exists(user_id: int):
     cursor.execute("SELECT user_id FROM users WHERE user_id=%s", (user_id,))
     return cursor.fetchone() is not None
-
-
-def get_user(user_id: int):
-    cursor.execute("SELECT * FROM users WHERE user_id=%s", (user_id,))
-    return cursor.fetchone()
-
-
-def get_all_users():
-    cursor.execute("SELECT * FROM users ORDER BY join_date ASC")
-    return cursor.fetchall()
 
 
 def get_all_user_ids():
@@ -276,7 +265,6 @@ def update_spam(user_id: int):
 # ================= ANTI SPAM =================
 
 SPAM_LIMIT = 6
-SPAM_WINDOW = 10
 
 async def anti_spam(message: Message):
     user_id = message.from_user.id
@@ -331,10 +319,7 @@ async def safe_send(chat_id, text, **kwargs):
     except FloodWait as e:
         await asyncio.sleep(e.value)
         return await safe_send(chat_id, text, **kwargs)
-    except (UserIsBlocked, InputUserDeactivated, PeerIdInvalid):
-        return None
-    except Exception as e:
-        logging.exception(e)
+    except Exception:
         return None
 
 
@@ -344,10 +329,7 @@ async def safe_copy(chat_id, from_chat_id, message_id):
     except FloodWait as e:
         await asyncio.sleep(e.value)
         return await safe_copy(chat_id, from_chat_id, message_id)
-    except (UserIsBlocked, InputUserDeactivated, PeerIdInvalid):
-        return None
-    except Exception as e:
-        logging.exception(e)
+    except Exception:
         return None
 
 
@@ -380,7 +362,9 @@ async def leave_channel(channel):
 
 async def is_subscribed(user_id):
     channel = get_setting("main_channel")
-    if not channel:
+    
+    # تجاوز الفحص إذا كانت القناة غير معينة أو لا تزال بالاسم الافتراضي
+    if not channel or "YourChannel" in channel:
         return True
 
     username = channel.replace("https://t.me/", "").replace("http://t.me/", "").replace("@", "").strip()
@@ -389,8 +373,9 @@ async def is_subscribed(user_id):
         member = await bot.get_chat_member(username, user_id)
         if member.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
             return True
-    except Exception:
-        pass
+    except Exception as e:
+        logging.error(f"Subscription Check Error: {e}")
+        return True
 
     return False
 
@@ -438,8 +423,6 @@ async def start_handler(client: Client, message: Message):
         )
 
     await client.send_chat_action(message.chat.id, ChatAction.TYPING)
-    await asyncio.sleep(1)
-
     await message.reply_text(
         f"أهلاً بك {message.from_user.first_name} 🌹\n\nيمكنك الآن استخدام جميع خدمات البوت.\n\nاختر الخدمة المطلوبة من القائمة.",
         reply_markup=main_keyboard
@@ -462,7 +445,6 @@ async def admin_panel(client: Client, message: Message):
         return
 
     await client.send_chat_action(message.chat.id, ChatAction.TYPING)
-    await asyncio.sleep(1)
     await message.reply_text("⚙️ لوحة تحكم الأدمن", reply_markup=admin_keyboard())
 
 
@@ -654,7 +636,7 @@ async def user_handler(client: Client, message: Message):
 async def member_update_handler(client, update):
     try:
         main_channel = get_setting("main_channel")
-        if not main_channel:
+        if not main_channel or "YourChannel" in main_channel:
             return
 
         username = main_channel.replace("https://t.me/", "").replace("http://t.me/", "").replace("@", "").strip()
