@@ -15,13 +15,15 @@ from pyrogram.errors import (
     UserAlreadyParticipant,
     UsernameInvalid,
     UsernameNotOccupied,
-    UserNotParticipant
+    UserNotParticipant,
+    PeerIdInvalid
 )
 
 from pyrogram.types import (
     Message,
     CallbackQuery,
-    InlineKeyboardMarkup
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
 )
 
 # ================= LOGGING SETUP =================
@@ -61,20 +63,14 @@ userbot = Client(
     in_memory=True
 )
 
-# ================= HELPER FOR COLORED BUTTONS (BOT API 9.4) =================
-def create_styled_button(text: str, url: str = None, callback_data: str = None, style: str = None):
+# ================= HELPER FOR BUTTONS =================
+def create_styled_button(text: str, url: str = None, callback_data: str = None):
     """
-    إنشاء زر يدعم ميزة الألوان (style) طبقاً لتحديث Bot API 9.4
-    الخيارات: 'primary' (أزرق), 'success' (أخضر), 'danger' (أحمر)
+    إنشاء زر InlineKeyboardButton بطريقة متوافقة تماماً مع Pyrogram
     """
-    btn = {"text": text}
     if url:
-        btn["url"] = url
-    if callback_data:
-        btn["callback_data"] = callback_data
-    if style in ["primary", "success", "danger"]:
-        btn["style"] = style
-    return btn
+        return InlineKeyboardButton(text=text, url=url)
+    return InlineKeyboardButton(text=text, callback_data=callback_data)
 
 # ================= DATABASE CONNECTION =================
 db = psycopg2.connect(
@@ -252,7 +248,6 @@ async def anti_spam(message: Message):
 # ================= HELPERS & REACTIONS =================
 
 async def add_random_reaction(chat_id: int, message_id: int):
-    """إضافة تفاعل عشوائي على رسالة المستخدم"""
     try:
         random_emoji = random.choice(REACTION_EMOJIS)
         await bot.send_reaction(chat_id, message_id, random_emoji)
@@ -315,7 +310,7 @@ async def is_subscribed(user_id):
         member = await userbot.get_chat_member(f"@{username}", user_id)
         if member.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
             return True
-    except UserNotParticipant:
+    except (UserNotParticipant, PeerIdInvalid):
         return False
     except Exception as e:
         logging.error(f"Subscription Check Error for @{username}: {e}")
@@ -329,12 +324,12 @@ def get_admin_keyboard():
     return InlineKeyboardMarkup(
         [
             [
-                create_styled_button("📊 إحصائيات البوت", callback_data="admin_stats", style="primary"),
-                create_styled_button("⚙️ القناة الرئيسية", callback_data="admin_set_channel", style="primary")
+                create_styled_button("📊 إحصائيات البوت", callback_data="admin_stats"),
+                create_styled_button("⚙️ القناة الرئيسية", callback_data="admin_set_channel")
             ],
             [
-                create_styled_button("📢 إذاعة للمستخدمين", callback_data="admin_broadcast", style="success"),
-                create_styled_button("🚫 إدارة الحظر", callback_data="admin_ban_menu", style="danger")
+                create_styled_button("📢 إذاعة للمستخدمين", callback_data="admin_broadcast"),
+                create_styled_button("🚫 إدارة الحظر", callback_data="admin_ban_menu")
             ],
             [
                 create_styled_button("❌ إغلاق اللوحة", callback_data="admin_close")
@@ -368,7 +363,7 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
             f"📊 **إحصائيات البوت الحالية:**\n\n"
             f"👤 **إجمالي المستخدمين:** `{u_count}`\n"
             f"🔄 **إجمالي التبادلات النشطة:** `{c_count}`",
-            reply_markup=InlineKeyboardMarkup([[create_styled_button("🔙 العودة للوحة", callback_data="admin_home", style="primary")]])
+            reply_markup=InlineKeyboardMarkup([[create_styled_button("🔙 العودة للوحة", callback_data="admin_home")]])
         )
 
     elif data == "admin_set_channel":
@@ -397,7 +392,7 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
             "🚫 **إدارة الحظر:**\n\n"
             "لحظر مستخدم أرسل: `/ban USER_ID`\n"
             "لفك حظر مستخدم أرسل: `/unban USER_ID`",
-            reply_markup=InlineKeyboardMarkup([[create_styled_button("🔙 العودة", callback_data="admin_home", style="primary")]])
+            reply_markup=InlineKeyboardMarkup([[create_styled_button("🔙 العودة", callback_data="admin_home")]])
         )
 
     elif data == "admin_home":
@@ -453,7 +448,6 @@ async def start_handler(client: Client, message: Message):
     if is_banned(user_id) or not await anti_spam(message):
         return
 
-    # تفاعل عشوائي على رسالة Start
     asyncio.create_task(add_random_reaction(message.chat.id, message.id))
 
     username = message.from_user.username or ""
@@ -467,8 +461,8 @@ async def start_handler(client: Client, message: Message):
         channel = get_setting("main_channel")
         kb = InlineKeyboardMarkup(
             [
-                [create_styled_button("📢 قناة التبادل الرئيسية", url=channel, style="primary")],
-                [create_styled_button("✅ تحقق من الاشتراك", callback_data="check_join", style="success")]
+                [create_styled_button("📢 قناة التبادل الرئيسية", url=channel)],
+                [create_styled_button("✅ تحقق من الاشتراك", callback_data="check_join")]
             ]
         )
         return await message.reply_text(
@@ -503,7 +497,6 @@ async def check_join_callback(client: Client, query: CallbackQuery):
 async def channel_exchange_handler(client: Client, message: Message):
     user_id = message.from_user.id
 
-    # معالجة إدخالات لوحة الأدمن (تغيير القناة أو الإذاعة)
     if user_id == ADMIN_ID and user_id in ADMIN_STATES:
         state = ADMIN_STATES[user_id]
         
@@ -532,15 +525,14 @@ async def channel_exchange_handler(client: Client, message: Message):
     if is_banned(user_id) or not await anti_spam(message):
         return
 
-    # تفاعل عشوائي على رسالة المستخدم
     asyncio.create_task(add_random_reaction(message.chat.id, message.id))
 
     if not await is_subscribed(user_id):
         channel = get_setting("main_channel")
         keyboard = InlineKeyboardMarkup(
             [
-                [create_styled_button("📢 قناة التبادل الرئيسية", url=channel, style="primary")],
-                [create_styled_button("✅ تحقق من الاشتراك", callback_data="check_join", style="success")]
+                [create_styled_button("📢 قناة التبادل الرئيسية", url=channel)],
+                [create_styled_button("✅ تحقق من الاشتراك", callback_data="check_join")]
             ]
         )
         return await message.reply_text("⚠️ يرجى الاشتراك في القناة الرئيسية أولاً.", reply_markup=keyboard)
@@ -558,7 +550,6 @@ async def channel_exchange_handler(client: Client, message: Message):
         save_channel(user_id, text)
         title = getattr(result, 'title', text)
 
-        # استخراج وقت والتاريخ الحالي بالثواني
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         userbot_me = await userbot.get_me()
@@ -566,15 +557,13 @@ async def channel_exchange_handler(client: Client, message: Message):
 
         formatted_channel = text if text.startswith("http") else f"https://t.me/{text.replace('@', '')}"
         
-        # أزرار شفافة ملونة بتحديث Bot API 9.4
         exchange_buttons = InlineKeyboardMarkup(
             [
-                [create_styled_button("👤 حساب الاشتراك (Userbot)", url=userbot_link, style="primary")],
-                [create_styled_button("📢 قناتك المقبولة في التبادل", url=formatted_channel, style="success")]
+                [create_styled_button("👤 حساب الاشتراك (Userbot)", url=userbot_link)],
+                [create_styled_button("📢 قناتك المقبولة في التبادل", url=formatted_channel)]
             ]
         )
 
-        # رسالة النجاح متضمنة تاريخ ووقت الاشتراك بالثواني
         await wait_msg.edit_text(
             f"🎉 **تم التبادل بنجاح!**\n\n"
             f"📌 **القناة:** {title}\n"
