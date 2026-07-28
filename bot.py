@@ -675,13 +675,18 @@ async def member_update_handler(client, update):
 
 # ================= WEB SERVER & WEBHOOK HANDLER =================
 
+# ================= WEB SERVER & WEBHOOK HANDLER =================
+
 async def health(request):
     return web.Response(text="Bot is running.")
 
 async def webhook_handler(request):
     try:
         data = await request.json()
-        await bot.feed_update(Update.de_json(bot, data))
+        # التعديل الصحيح لمكتبة Pyrogram:
+        update = Update.de_json(bot, data)
+        if update:
+            await bot.dispatcher.feed_update(bot, update)
     except Exception as e:
         logging.error(f"Webhook Feed Error: {e}")
     return web.Response(text="OK")
