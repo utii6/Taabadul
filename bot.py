@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import random
+import json
 import time
 from datetime import datetime, timedelta
 import psycopg2
@@ -250,13 +251,23 @@ async def simulate_human_action(chat_id: int, duration: float = None):
         logging.debug(f"Chat action error: {e}")
 
 async def add_random_reaction(chat_id: int, message_id: int):
-    """إضافة تفاعل إيموجي فورية ومباشرة"""
     try:
-        random_emoji = random.choice(REACTION_EMOJIS)
-        await bot.send_reaction(chat_id=chat_id, message_id=message_id, emoji=random_emoji)
-    except Exception as e:
-        logging.error(f"Reaction Error: {e}")
+        emoji = random.choice(REACTION_EMOJIS)
 
+        async with ClientSession() as session:
+            await session.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction",
+                data={
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                    "reaction": json.dumps([
+                        {"type": "emoji", "emoji": emoji}
+                    ])
+                }
+            )
+
+    except Exception as e:
+        logging.exception(e)
 # ================= ANTI SPAM =================
 
 SPAM_LIMIT = 6
@@ -509,9 +520,9 @@ async def start_handler(client: Client, message: Message):
 
     await message.reply_text(
         f"أهلاً بك {message.from_user.first_name} 🌹\n\n"
-        "✨ **أرسل الآن رابط قناتك** لبدء التبادل التلقائي:\n"
-        "▫️ `@YourChannel` \n"
-        "▫️ `https://t.me/YourChannel`\n\n"
+        "✨ **أرسل الآن رابط قناتك بالشكل التالي ؛** لبدء التبادل التلقائي:\n"
+        "▫️ `@KKEK2` \n"
+        "▫️ `https://t.me/KKEK2`\n\n"
     )
 
 # ================= FORWARD & REPLY SYSTEM (ADMIN & USER) =================
