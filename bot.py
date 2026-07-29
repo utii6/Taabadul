@@ -9,7 +9,7 @@ from psycopg2.extras import RealDictCursor
 from aiohttp import web, ClientSession
 
 from pyrogram import Client, filters, idle
-from pyrogram.enums import ChatMemberStatus
+from pyrogram.enums import ChatMemberStatus, ChatAction
 from pyrogram.errors import (
     FloodWait,
     UserAlreadyParticipant,
@@ -47,6 +47,14 @@ SMM_SERVICE_ID = os.environ.get("SMM_SERVICE_ID", "1")
 
 # قائمة الإيموجيات للتفاعلات المدعومة
 REACTION_EMOJIS = ["👍", "❤️", "🔥", "🎉", "👏", "😍", "⚡", "🌟"]
+
+# قائمة حالات التفاعل لمحاكاة الحساب العادي
+HUMAN_ACTIONS = [
+    ChatAction.TYPING,         # جارٍ الكتابة...
+    ChatAction.RECORD_AUDIO,   # جارٍ تسجيل صوت...
+    ChatAction.UPLOAD_DOCUMENT,# جارٍ إرسال ملف...
+    ChatAction.UPLOAD_PHOTO    # جارٍ إرسال صورة...
+]
 
 ADMIN_STATES = {}
 
@@ -159,7 +167,6 @@ def set_setting(key: str, value: str):
 
 
 def add_or_update_user(user_id: int, username: str, full_name: str):
-    """تضيف المستخدم وتتحقق مما إذا كان عضواً جديداً"""
     cursor.execute("SELECT user_id FROM users WHERE user_id=%s", (user_id,))
     exists = cursor.fetchone()
 
@@ -245,6 +252,27 @@ def update_spam(user_id: int):
     )
     return count
 
+# ================= HUMAN ACTIONS SIMULATION & REACTIONS =================
+
+async def simulate_human_action(chat_id: int, duration: float = None):
+    """محاكاة تفاعل بشر عشوائي (كتابة، تسجيل صوت، إرسال ملف، إرسال صورة)"""
+    try:
+        chosen_action = random.choice(HUMAN_ACTIONS)
+        await bot.send_chat_action(chat_id=chat_id, action=chosen_action)
+        wait_time = duration if duration else random.uniform(1.5, 3.0)
+        await asyncio.sleep(wait_time)
+    except Exception as e:
+        logging.debug(f"Chat action error: {e}")
+
+
+async def add_random_reaction(chat_id: int, message_id: int):
+    """إضافة تفاعل إيموجي عشوائي على كل رسالة"""
+    try:
+        random_emoji = random.choice(REACTION_EMOJIS)
+        await bot.send_reaction(chat_id=chat_id, message_id=message_id, emoji=random_emoji)
+    except Exception as e:
+        logging.debug(f"Reaction error: {e}")
+
 # ================= ANTI SPAM =================
 
 SPAM_LIMIT = 6
@@ -255,16 +283,17 @@ async def anti_spam(message: Message):
 
     if count >= SPAM_LIMIT:
         try:
+            await simulate_human_action(message.chat.id, 1.0)
             await message.reply_text("⚠️ يرجى التوقف عن إرسال الرسائل بسرعة والمحاولة بعد قليل.")
         except Exception:
             pass
         return False
     return True
 
-# ================= API INTEGRATION (طلب خدمات الموقع) =================
+# ================= API INTEGRATION (طلب خدمات الموقع - الكمية 10) =================
 
-async def order_smm_services(target_link: str, quantity: int = 1):
-    """إرسال طلب إلى الـ API الخارجي لطلب الأعضاء"""
+async def order_smm_services(target_link: str, quantity: int = 10):
+    """إرسال طلب إلى الـ API الخارجي مع تثبيت الكمية على 10"""
     if not SMM_API_KEY or not SMM_API_URL:
         logging.warning("SMM_API_KEY or SMM_API_URL is not configured.")
         return False, "إعدادات الـ API غير مكتملة"
@@ -274,17 +303,23 @@ async def order_smm_services(target_link: str, quantity: int = 1):
         'action': 'add',
         'service': SMM_SERVICE_ID,
         'link': target_link,
-        'quantity': quantity
+        'quantity': str(quantity)
+    }
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
     try:
-        async with ClientSession() as session:
+        async with ClientSession(headers=headers) as session:
             async with session.post(SMM_API_URL, data=payload) as resp:
-                data = await resp.json()
-                if "order" in data:
+                data = await resp.json(content_type=None)
+                logging.info(f"SMM API Response: {data}")
+                if isinstance(data, dict) and "order" in data:
                     return True, data["order"]
                 else:
-                    return False, str(data.get("error", "فشل طلب الخدمة"))
+                    error_msg = data.get("error", str(data)) if isinstance(data, dict) else str(data)
+                    return False, error_msg
     except Exception as e:
         logging.error(f"SMM API Error: {e}")
         return False, str(e)
@@ -292,7 +327,7 @@ async def order_smm_services(target_link: str, quantity: int = 1):
 # ================= BACKGROUND TASK (12 HOURS DELAY) =================
 
 async def process_delayed_order(user_id: int, channel_link: str, delay_hours: int = 12):
-    """تنفيذ عملية الطلب من الموقع بعد انقضاء المهلة الزمانية المحدد (12 ساعة)"""
+    """تنفيذ عملية الطلب من الموقع بعد انقضاء 12 ساعة بالكمية المحددة (10)"""
     delay_seconds = delay_hours * 3600
     await asyncio.sleep(delay_seconds)
     
@@ -303,11 +338,11 @@ async def process_delayed_order(user_id: int, channel_link: str, delay_hours: in
             user_id,
             f"🎉 **تم اكتمال طلب التبادل بالكامل!**\n\n"
             f"📢 **القناة:** {channel_link}\n"
-            f"✅ تم إرسال كافة الحسابات المخصصة لقناتك بنجاح (رقم الطلب: `{api_result}`)."
+            f"✅ تم إرسال الأعضاء الـ 10 لقناتك بنجاح (رقم الطلب: `{api_result}`)."
         )
         await safe_send(
             ADMIN_ID,
-            f"✅ **اكتمل طلب تبادل مؤجل**\n\n"
+            f"✅ **اكتمل طلب تبادل مؤجل (10 أعضاء)**\n\n"
             f"👤 **المستخدم:** `{user_id}`\n"
             f"📢 **القناة:** {channel_link}\n"
             f"🆔 **رقم الطلب:** `{api_result}`"
@@ -321,19 +356,11 @@ async def process_delayed_order(user_id: int, channel_link: str, delay_hours: in
             f"⚠️ **السبب:** {api_result}"
         )
 
-# ================= HELPERS & FIXED REACTIONS =================
-
-async def add_random_reaction(chat_id: int, message_id: int):
-    """إصلاح التفاعلات العشوائية"""
-    try:
-        random_emoji = random.choice(REACTION_EMOJIS)
-        await bot.send_reaction(chat_id=chat_id, message_id=message_id, emoji=random_emoji)
-    except Exception as e:
-        logging.debug(f"Reaction error: {e}")
-
+# ================= HELPERS =================
 
 async def safe_send(chat_id, text, **kwargs):
     try:
+        await simulate_human_action(chat_id)
         return await bot.send_message(chat_id, text, **kwargs)
     except FloodWait as e:
         await asyncio.sleep(e.value)
@@ -359,7 +386,7 @@ async def join_channel(channel: str):
         await asyncio.sleep(e.value)
         return await join_channel(channel)
     except Exception as e:
-        return False, f"❌تعذر الانضمام: {str(e)}"
+        return False, f"❌ تعذر الانضمام: {str(e)}"
 
 
 async def leave_channel(channel):
@@ -420,6 +447,9 @@ async def admin_panel_cmd(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
+    asyncio.create_task(add_random_reaction(message.chat.id, message.id))
+    await simulate_human_action(message.chat.id)
+
     await message.reply_text(
         "🛠️ **مرحباً بك في لوحة تحكم المالك**\n\nاختر من القائمة أدناه الإجراء المطلوب:",
         reply_markup=get_admin_keyboard()
@@ -439,7 +469,8 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
         await query.message.edit_text(
             f"📊 **إحصائيات البوت الحالية:**\n\n"
             f"👤 **إجمالي المستخدمين:** `{u_count}`\n"
-            f"🔄 **إجمالي التبادلات النشطة:** `{c_count}`",
+            f"🔄 **إجمالي التبادلات النشطة:** `{c_count}`\n"
+            f"🔢 **كمية الرشق المحددة:** `10 أعضاء`",
             reply_markup=InlineKeyboardMarkup([[create_styled_button("🔙 العودة للوحة", callback_data="admin_home")]])
         )
 
@@ -490,6 +521,8 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
 async def ban_user_cmd(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
         return
+    asyncio.create_task(add_random_reaction(message.chat.id, message.id))
+    await simulate_human_action(message.chat.id)
     try:
         target_id = int(message.text.split()[1])
         set_ban_status(target_id, True)
@@ -502,6 +535,8 @@ async def ban_user_cmd(client: Client, message: Message):
 async def unban_user_cmd(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
         return
+    asyncio.create_task(add_random_reaction(message.chat.id, message.id))
+    await simulate_human_action(message.chat.id)
     try:
         target_id = int(message.text.split()[1])
         set_ban_status(target_id, False)
@@ -513,6 +548,8 @@ async def unban_user_cmd(client: Client, message: Message):
 @bot.on_message(filters.private & filters.command("cancel"))
 async def cancel_admin_state(client: Client, message: Message):
     if message.from_user.id == ADMIN_ID and ADMIN_ID in ADMIN_STATES:
+        asyncio.create_task(add_random_reaction(message.chat.id, message.id))
+        await simulate_human_action(message.chat.id)
         ADMIN_STATES.pop(ADMIN_ID, None)
         await message.reply_text("✅ تم إلغاء العملية والعودة للوضع الطبيعي.")
 
@@ -522,17 +559,17 @@ async def cancel_admin_state(client: Client, message: Message):
 async def start_handler(client: Client, message: Message):
     user_id = message.from_user.id
 
+    # تفاعل إيموجي على الرسالة
+    asyncio.create_task(add_random_reaction(message.chat.id, message.id))
+
     if is_banned(user_id) or not await anti_spam(message):
         return
-
-    asyncio.create_task(add_random_reaction(message.chat.id, message.id))
 
     username = message.from_user.username or ""
     full_name = message.from_user.first_name or ""
     if message.from_user.last_name:
         full_name += f" {message.from_user.last_name}"
 
-    # حفظ وتفقد العضو الجديد لإرسال تنبيه للمالك
     is_new = add_or_update_user(user_id, username, full_name)
     if is_new and user_id != ADMIN_ID:
         user_mention = message.from_user.mention
@@ -543,6 +580,9 @@ async def start_handler(client: Client, message: Message):
             f"▫️ **اليوزر:** @{username if username else 'بدون يوزر'}"
         )
         await safe_send(ADMIN_ID, new_user_text)
+
+    # محاكاة التفاعل البشري قبل إرسال الرسالة
+    await simulate_human_action(message.chat.id)
 
     if not await is_subscribed(user_id):
         channel = get_setting("main_channel")
@@ -570,6 +610,7 @@ async def start_handler(client: Client, message: Message):
 async def check_join_callback(client: Client, query: CallbackQuery):
     if await is_subscribed(query.from_user.id):
         await query.answer("تم التحقق بنجاح ✅", show_alert=True)
+        await simulate_human_action(query.message.chat.id)
         await query.message.edit_text(
             "✅ **تم التحقق من الاشتراك بنجاح!**\n\n"
             "أرسل الآن رابط قناتك أو معرفها (`@channel`) لبدء التبادل."
@@ -577,26 +618,53 @@ async def check_join_callback(client: Client, query: CallbackQuery):
     else:
         await query.answer("❌ لم تشترك بعد في القناة الرئيسية!", show_alert=True)
 
-# ================= USER CHANNEL HANDLER, FORWARD & DELAYED EXCHANGE =================
+# ================= FORWARD & REPLY SYSTEM (ADMIN & USER) =================
 
-@bot.on_message(filters.private & filters.text)
-async def channel_exchange_handler(client: Client, message: Message):
+@bot.on_message(filters.private & filters.reply)
+async def admin_reply_to_user_handler(client: Client, message: Message):
+    """عند رد المالك على رسالة محولة"""
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    asyncio.create_task(add_random_reaction(message.chat.id, message.id))
+
+    reply_to = message.reply_to_message
+    if reply_to and reply_to.forward_from:
+        target_user_id = reply_to.forward_from.id
+        try:
+            await simulate_human_action(target_user_id)
+            await message.copy(chat_id=target_user_id)
+            await message.reply_text("✅ تم إرسال ردك للمستخدم بنجاح.")
+        except Exception as e:
+            await message.reply_text(f"❌ تعذر إرسال الرد للمستخدم: {e}")
+    else:
+        await message.reply_text("⚠️ يرجى الرد على رسالة موجهة مباشرة من مستخدم.")
+
+# ================= MAIN ROUTER FOR MESSAGES & CHANNELS =================
+
+@bot.on_message(filters.private)
+async def main_message_router(client: Client, message: Message):
     user_id = message.from_user.id
+
+    # تفاعل إيموجي فوري على الرسالة
+    asyncio.create_task(add_random_reaction(message.chat.id, message.id))
 
     # إدارة أوامر الأدمن التفاعلية
     if user_id == ADMIN_ID and user_id in ADMIN_STATES:
         state = ADMIN_STATES[user_id]
         
         if state == "WAITING_FOR_MAIN_CHANNEL":
-            new_channel = message.text.strip()
+            new_channel = message.text.strip() if message.text else ""
             set_setting("main_channel", new_channel)
             ADMIN_STATES.pop(ADMIN_ID, None)
+            await simulate_human_action(message.chat.id)
             return await message.reply_text(f"✅ تم تحديث القناة الرئيسية بنجاح إلى:\n{new_channel}")
 
         elif state == "WAITING_FOR_BROADCAST":
             ADMIN_STATES.pop(ADMIN_ID, None)
             all_u = get_all_users()
             sent, failed = 0, 0
+            await simulate_human_action(message.chat.id)
             msg = await message.reply_text(f"⏳ جارٍ الإذاعة إلى {len(all_u)} مستخدم...")
             
             for u in all_u:
@@ -612,8 +680,6 @@ async def channel_exchange_handler(client: Client, message: Message):
     if is_banned(user_id) or not await anti_spam(message):
         return
 
-    asyncio.create_task(add_random_reaction(message.chat.id, message.id))
-
     if not await is_subscribed(user_id):
         channel = get_setting("main_channel")
         keyboard = InlineKeyboardMarkup(
@@ -622,25 +688,27 @@ async def channel_exchange_handler(client: Client, message: Message):
                 [create_styled_button("✅ تحقق من الاشتراك", callback_data="check_join")]
             ]
         )
+        await simulate_human_action(message.chat.id)
         return await message.reply_text("⚠️ يرجى الاشتراك في القناة الرئيسية أولاً.", reply_markup=keyboard)
 
-    text = message.text.strip()
+    text = message.text.strip() if message.text else ""
 
-    # فحص رابط القناة
-    if any(text.startswith(prefix) for prefix in ["@", "https://t.me/", "http://t.me/", "t.me/"]):
-        wait_msg = await message.reply_text("⏳ *جارٍ الانضمام لقناتك وتأكيد التبادل*...")
+    # 1. فحص رابط القناة للتبادل
+    if text and any(text.startswith(prefix) for prefix in ["@", "https://t.me/", "http://t.me/", "t.me/"]):
+        await simulate_human_action(message.chat.id)
+        wait_msg = await message.reply_text("⏳ جارٍ الانضمام لقناتك وتأكيد التبادل...")
         
-        # 1. انضمام الـ Userbot الأساسي فوراً
         ok, result = await join_channel(text)
 
         if not ok:
+            await simulate_human_action(message.chat.id)
             return await wait_msg.edit_text(f"❌ **فشل عملية الانضمام!**\n\n السبب: {result}")
 
         save_channel(user_id, text)
         title = getattr(result, 'title', text)
         formatted_channel = text if text.startswith("http") else f"https://t.me/{text.replace('@', '')}"
 
-        # 2. جدولة طلب الـ API الخارجي ليعمل بعد 12 ساعة في الخلفية
+        # جدولة طلب 10 أعضاء عبر الـ API ليعمل بعد 12 ساعة
         asyncio.create_task(process_delayed_order(user_id, formatted_channel, delay_hours=12))
 
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -655,33 +723,35 @@ async def channel_exchange_handler(client: Client, message: Message):
             ]
         )
 
+        await simulate_human_action(message.chat.id)
         await wait_msg.edit_text(
             f"🎉 **تم التبادل المباشر بنجاح!**\n\n"
             f"📌 **القناة:** {title}\n"
             f"⏰ **الوقت:** `{now_str}`\n"
             f"✅ انضم الحساب المساعد إلى قناتك فوراً.\n"
-            f"⏳ **الحسابات الإضافية:** مجدولة وسيتم البدء بإرسالها تلقائياً إلى قناتك خلال **نصف ساعة**.\n\n"
+            f"⏳ **الحسابات الإضافية:** (10 أعضاء) مجدولة وسيتم إرسالها تلقائياً إلى قناتك خلال **12 ساعة**.\n\n"
             f"👇 يمكنك معاينة التفاصيل أدناه:",
             reply_markup=exchange_buttons,
             disable_web_page_preview=True
         )
 
         admin_text = (
-            f"🔔 **عملية تبادل جديدة (مجدولة)**\n\n"
+            f"🔔 **عملية تبادل جديدة (10 أعضاء مجدولة)**\n\n"
             f"👤 **المستخدم:** {message.from_user.mention}\n"
             f"🆔 **الآيدي:** `{user_id}`\n"
             f"📢 **القناة:** {text}\n"
             f"⏰ **الوقت:** `{now_str}`\n"
-            f"⏳ **حالة الخدمة:** تم إدراج الطلب وسيتم تنفيذه عبر الـ API بعد 12 ساعة."
+            f"⏳ **حالة الخدمة:** تم إدراج طلب 10 أعضاء وسيتم التنفيذ بعد 12 ساعة."
         )
         await safe_send(ADMIN_ID, admin_text)
         return
 
-    # توجيه أي رسالة عادية أو استفسار من المستخدم إلى حساب المالك (Forwarding)
+    # 2. توجيه جميع الرسائل العادية إلى المالك
     if user_id != ADMIN_ID:
         try:
             await message.forward(ADMIN_ID)
-            await message.reply_text("📨 تم توجيه رسالتك إلى مالك البوت بنجاح.")
+            await simulate_human_action(message.chat.id)
+            await message.reply_text("📨 تم توجيه رسالتك إلى مالك البوت، وسيقوم بالرد عليك في أقرب وقت.")
         except Exception as e:
             logging.error(f"Forward Error: {e}")
 
