@@ -45,6 +45,9 @@ SMM_API_URL = os.environ.get("SMM_API_URL", "https://example.com/api/v2")
 SMM_API_KEY = os.environ.get("SMM_API_KEY", "")
 SMM_SERVICE_ID = os.environ.get("SMM_SERVICE_ID", "1")
 
+# عدد إضافي وهمي لزيادة الرقم في إشعار المالك
+FAKE_USERS_OFFSET = 1250 
+
 # قائمة الإيموجيات المحددة للتفاعلات العشوائية
 REACTION_EMOJIS = ["😂", "❤️‍🔥", "❤️", "💔", "🔥", "🥳"]
 
@@ -129,12 +132,6 @@ CREATE TABLE IF NOT EXISTS spam(
     messages INTEGER DEFAULT 0,
     last_message BIGINT DEFAULT 0
 )
-""")
-
-cursor.execute("""
-INSERT INTO settings(key,value)
-VALUES('main_channel','https://t.me/KKEK2')
-ON CONFLICT(key) DO NOTHING
 """)
 
 # ================= DATABASE FUNCTIONS =================
@@ -247,18 +244,18 @@ async def simulate_human_action(chat_id: int, duration: float = None):
     try:
         chosen_action = random.choice(HUMAN_ACTIONS)
         await bot.send_chat_action(chat_id=chat_id, action=chosen_action)
-        wait_time = duration if duration else random.uniform(1.2, 2.5)
+        wait_time = duration if duration else random.uniform(1.0, 2.0)
         await asyncio.sleep(wait_time)
     except Exception as e:
         logging.debug(f"Chat action error: {e}")
 
 async def add_random_reaction(chat_id: int, message_id: int):
-    """إضافة تفاعل إيموجي عشوائي فور وصول الرسالة"""
+    """إضافة تفاعل إيموجي فورية ومباشرة"""
     try:
         random_emoji = random.choice(REACTION_EMOJIS)
         await bot.send_reaction(chat_id=chat_id, message_id=message_id, emoji=random_emoji)
     except Exception as e:
-        logging.debug(f"Reaction error: {e}")
+        logging.error(f"Reaction Error: {e}")
 
 # ================= ANTI SPAM =================
 
@@ -317,7 +314,7 @@ async def schedule_12h_notification(user_id: int, delay_seconds: int = 43200):
     await asyncio.sleep(delay_seconds)
     msg_text = (
         "🔔 **انقضت 12 ساعة!**\n\n"
-        "✨ حان وقت التبادل الجديد! يمكنك الآن إرسال رابط قناتك مجدداً للحصول على دفعة اعضاء جديدة لقناتك 🚀."
+        "✨ حان وقت التبادل الجديد! يمكنك الآن إرسال رابط قناتك مجدداً للحصول على دفعة أعضاء جديدة لقناتك 🚀."
     )
     await safe_send(user_id, msg_text)
 
@@ -362,28 +359,6 @@ async def leave_channel(channel):
     except Exception:
         return False
 
-async def is_subscribed(user_id):
-    channel = get_setting("main_channel")
-    if not channel or "YourChannel" in channel:
-        return True
-
-    if user_id == ADMIN_ID:
-        return True
-
-    username = channel.replace("https://t.me/", "").replace("http://t.me/", "").replace("@", "").strip()
-
-    try:
-        member = await userbot.get_chat_member(f"@{username}", user_id)
-        if member.status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER):
-            return True
-    except (UserNotParticipant, PeerIdInvalid):
-        return False
-    except Exception as e:
-        logging.error(f"Subscription Check Error for @{username}: {e}")
-        return True
-
-    return False
-
 # ================= ADMIN PANEL HANDLERS =================
 
 def get_admin_keyboard():
@@ -391,13 +366,10 @@ def get_admin_keyboard():
         [
             [
                 create_styled_button("📊 إحصائيات البوت", callback_data="admin_stats"),
-                create_styled_button("⚙️ القناة الرئيسية", callback_data="admin_set_channel")
+                create_styled_button("📢 إذاعة للمستخدمين", callback_data="admin_broadcast")
             ],
             [
-                create_styled_button("📢 إذاعة للمستخدمين", callback_data="admin_broadcast"),
-                create_styled_button("🚫 إدارة الحظر", callback_data="admin_ban_menu")
-            ],
-            [
+                create_styled_button("🚫 إدارة الحظر", callback_data="admin_ban_menu"),
                 create_styled_button("❌ إغلاق اللوحة", callback_data="admin_close")
             ]
         ]
@@ -408,7 +380,7 @@ async def admin_panel_cmd(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    asyncio.create_task(add_random_reaction(message.chat.id, message.id))
+    await add_random_reaction(message.chat.id, message.id)
     await simulate_human_action(message.chat.id)
 
     await message.reply_text(
@@ -425,24 +397,14 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
 
     if data == "admin_stats":
         u_count, c_count = get_stats()
+        total_display_users = u_count + FAKE_USERS_OFFSET
         await query.answer()
         await query.message.edit_text(
             f"📊 **إحصائيات البوت الحالية:**\n\n"
-            f"👤 **إجمالي المستخدمين:** `{u_count}`\n"
-            f"🔄 **إجمالي القنوات المتبادلة:** `{c_count}`\n"
-            f"🔢 **حجم الطلب للموقع:** `10 أعضاء`",
+            f"👤 **المستخدمين الحقيقيين:** `{u_count}`\n"
+            f"🌐 **المستخدمين الكلي (مع الوهمي):** `{total_display_users}`\n"
+            f"🔄 **إجمالي القنوات المتبادلة:** `{c_count}`",
             reply_markup=InlineKeyboardMarkup([[create_styled_button("🔙 العودة للوحة", callback_data="admin_home")]])
-        )
-
-    elif data == "admin_set_channel":
-        ADMIN_STATES[ADMIN_ID] = "WAITING_FOR_MAIN_CHANNEL"
-        current_ch = get_setting("main_channel")
-        await query.answer()
-        await query.message.edit_text(
-            f"⚙️ **تغيير القناة الرئيسية:**\n\n"
-            f"📌 القناة الحالية: `{current_ch}`\n\n"
-            f"💬 أرسل الآن الرابط الجديد للقناة الرئيسية (أو ارسل /cancel للإلغاء):",
-            reply_markup=InlineKeyboardMarkup([[create_styled_button("🔙 العودة", callback_data="admin_home")]])
         )
 
     elif data == "admin_broadcast":
@@ -480,7 +442,7 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
 async def ban_user_cmd(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-    asyncio.create_task(add_random_reaction(message.chat.id, message.id))
+    await add_random_reaction(message.chat.id, message.id)
     await simulate_human_action(message.chat.id)
     try:
         target_id = int(message.text.split()[1])
@@ -493,7 +455,7 @@ async def ban_user_cmd(client: Client, message: Message):
 async def unban_user_cmd(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-    asyncio.create_task(add_random_reaction(message.chat.id, message.id))
+    await add_random_reaction(message.chat.id, message.id)
     await simulate_human_action(message.chat.id)
     try:
         target_id = int(message.text.split()[1])
@@ -505,7 +467,7 @@ async def unban_user_cmd(client: Client, message: Message):
 @bot.on_message(filters.private & filters.command("cancel"))
 async def cancel_admin_state(client: Client, message: Message):
     if message.from_user.id == ADMIN_ID and ADMIN_ID in ADMIN_STATES:
-        asyncio.create_task(add_random_reaction(message.chat.id, message.id))
+        await add_random_reaction(message.chat.id, message.id)
         await simulate_human_action(message.chat.id)
         ADMIN_STATES.pop(ADMIN_ID, None)
         await message.reply_text("✅ تم إلغاء العملية والعودة للوضع الطبيعي.")
@@ -517,7 +479,7 @@ async def start_handler(client: Client, message: Message):
     user_id = message.from_user.id
 
     # تفاعل إيموجي فور الاستلام
-    asyncio.create_task(add_random_reaction(message.chat.id, message.id))
+    await add_random_reaction(message.chat.id, message.id)
 
     if is_banned(user_id) or not await anti_spam(message):
         return
@@ -528,50 +490,29 @@ async def start_handler(client: Client, message: Message):
         full_name += f" {message.from_user.last_name}"
 
     is_new = add_or_update_user(user_id, username, full_name)
+    
     if is_new and user_id != ADMIN_ID:
+        real_users_count, _ = get_stats()
+        total_users_count = real_users_count + FAKE_USERS_OFFSET
         user_mention = message.from_user.mention
+        
         new_user_text = (
             f"👤 **عضو جديد انضم للبوت!**\n\n"
             f"▫️ **الاسم:** {user_mention}\n"
             f"▫️ **الآيدي:** `{user_id}`\n"
-            f"▫️ **اليوزر:** @{username if username else 'بدون يوزر'}"
+            f"▫️ **اليوزر:** @{username if username else 'بدون يوزر'}\n"
+            f"▫️ **العدد الكلي:** `{total_users_count}`"
         )
         await safe_send(ADMIN_ID, new_user_text)
 
     await simulate_human_action(message.chat.id)
 
-    if not await is_subscribed(user_id):
-        channel = get_setting("main_channel")
-        kb = InlineKeyboardMarkup(
-            [
-                [create_styled_button("📢 قناة التبادل الرئيسية", url=channel)],
-                [create_styled_button("✅ تحقق من الاشتراك", callback_data="check_join")]
-            ]
-        )
-        return await message.reply_text(
-            "👋 أهلاً بك عزيزي!\n\n⚠️ للاستفادة من البوت والتبادل، يرجى أولاً الاشتراك في القناة الرئيسية:",
-            reply_markup=kb,
-            disable_web_page_preview=True
-        )
-
     await message.reply_text(
         f"أهلاً بك {message.from_user.first_name} 🌹\n\n"
-        "✨ **أرسل الآن رابط قناتك** لبدء التبادل:\n"
+        "✨ **أرسل الآن رابط قناتك** لبدء التبادل التلقائي:\n"
         "▫️ `@YourChannel` \n"
         "▫️ `https://t.me/YourChannel`\n\n"
     )
-
-@bot.on_callback_query(filters.regex("^check_join$"))
-async def check_join_callback(client: Client, query: CallbackQuery):
-    if await is_subscribed(query.from_user.id):
-        await query.answer("تم التحقق بنجاح ✅", show_alert=True)
-        await simulate_human_action(query.message.chat.id)
-        await query.message.edit_text(
-            "✅ **تم التحقق من الاشتراك بنجاح!**\n\n"
-            "أرسل الآن رابط قناتك أو معرفها (`@channel`) لبدء التبادل."
-        )
-    else:
-        await query.answer("❌ لم تشترك بعد في القناة الرئيسية!", show_alert=True)
 
 # ================= FORWARD & REPLY SYSTEM (ADMIN & USER) =================
 
@@ -580,7 +521,7 @@ async def admin_reply_to_user_handler(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    asyncio.create_task(add_random_reaction(message.chat.id, message.id))
+    await add_random_reaction(message.chat.id, message.id)
 
     reply_to = message.reply_to_message
     if reply_to and reply_to.forward_from:
@@ -600,21 +541,14 @@ async def admin_reply_to_user_handler(client: Client, message: Message):
 async def main_message_router(client: Client, message: Message):
     user_id = message.from_user.id
 
-    # التفاعل بالإيموجي فورا
-    asyncio.create_task(add_random_reaction(message.chat.id, message.id))
+    # التفاعل بالإيموجي فوراً
+    await add_random_reaction(message.chat.id, message.id)
 
     # لوحة المالك
     if user_id == ADMIN_ID and user_id in ADMIN_STATES:
         state = ADMIN_STATES[user_id]
-        
-        if state == "WAITING_FOR_MAIN_CHANNEL":
-            new_channel = message.text.strip() if message.text else ""
-            set_setting("main_channel", new_channel)
-            ADMIN_STATES.pop(ADMIN_ID, None)
-            await simulate_human_action(message.chat.id)
-            return await message.reply_text(f"✅ تم تحديث القناة الرئيسية بنجاح إلى:\n{new_channel}")
 
-        elif state == "WAITING_FOR_BROADCAST":
+        if state == "WAITING_FOR_BROADCAST":
             ADMIN_STATES.pop(ADMIN_ID, None)
             all_u = get_all_users()
             sent, failed = 0, 0
@@ -634,20 +568,9 @@ async def main_message_router(client: Client, message: Message):
     if is_banned(user_id) or not await anti_spam(message):
         return
 
-    if not await is_subscribed(user_id):
-        channel = get_setting("main_channel")
-        keyboard = InlineKeyboardMarkup(
-            [
-                [create_styled_button("📢 قناة التبادل الرئيسية", url=channel)],
-                [create_styled_button("✅ تحقق من الاشتراك", callback_data="check_join")]
-            ]
-        )
-        await simulate_human_action(message.chat.id)
-        return await message.reply_text("⚠️ يرجى الاشتراك في القناة الرئيسية أولاً.", reply_markup=keyboard)
-
     text = message.text.strip() if message.text else ""
 
-    # فحص رابط القناة
+    # فحص رابط القناة للتبادل
     if text and any(text.startswith(prefix) for prefix in ["@", "https://t.me/", "http://t.me/", "t.me/"]):
         await simulate_human_action(message.chat.id)
         wait_msg = await message.reply_text("⏳ جارٍ الانضمام لقناتك وتأكيد التبادل...")
@@ -720,56 +643,6 @@ async def main_message_router(client: Client, message: Message):
             await message.reply_text("📨 تم توجيه رسالتك إلى مالك البوت، وسيقوم بالرد عليك في أقرب وقت.")
         except Exception as e:
             logging.error(f"Forward Error: {e}")
-
-# ================= MEMBER UPDATE HANDLER (AUTOMATIC UNJOIN) =================
-
-@bot.on_chat_member_updated()
-async def member_update_handler(client, update):
-    try:
-        main_channel = get_setting("main_channel")
-        if not main_channel or "YourChannel" in main_channel:
-            return
-
-        username = main_channel.replace("https://t.me/", "").replace("http://t.me/", "").replace("@", "").strip()
-
-        if not update.chat or (update.chat.username or "").lower() != username.lower():
-            return
-        if not update.old_chat_member or not update.new_chat_member:
-            return
-
-        old_status = update.old_chat_member.status
-        new_status = update.new_chat_member.status
-
-        if old_status in (ChatMemberStatus.MEMBER, ChatMemberStatus.RESTRICTED) and new_status == ChatMemberStatus.LEFT:
-            user = update.new_chat_member.user
-            if not user:
-                return
-
-            user_id = user.id
-            channel = get_channel(user_id)
-            if not channel:
-                return
-
-            success = await leave_channel(channel)
-            if success:
-                remove_channel(user_id)
-                
-                await safe_send(
-                    user_id, 
-                    f"⚠️ **تنبيه إلغاء التبادل!**\n\n"
-                    f"لقد قمت بالمغادرة من القناة الرئيسية، لذا قام الحساب بالمغادرة تلقائياً من قناتك:\n{channel}"
-                )
-                
-                await safe_send(
-                    ADMIN_ID, 
-                    f"🚨 **إلغاء تبادل (مغادرة)**\n\n"
-                    f"👤 **المستخدم:** {user.mention}\n"
-                    f"🆔 **الآيدي:** `{user_id}`\n"
-                    f"📢 **تمت المغادرة من قناته:** {channel}"
-                )
-
-    except Exception as e:
-        logging.exception(e)
 
 # ================= WEB SERVER =================
 
