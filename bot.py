@@ -170,9 +170,10 @@ CREATE TABLE IF NOT EXISTS channels(
 """)
 
 try:
-    cursor.execute("ALTER TABLE channels ADD COLUMN IF NOT EXISTS last_order_time TIMESTAMP DEFAULT NOW() - INTERVAL '12 hours';")
+    cursor.execute("ALTER TABLE spam ADD COLUMN IF NOT EXISTS temp_ban_until TIMESTAMP DEFAULT NULL;")
 except Exception:
     pass
+
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS spam(
@@ -388,7 +389,7 @@ async def anti_spam(message: Message):
             await simulate_human_action(message.chat.id, 1.0)
             await send_colored_message(
                 chat_id=message.chat.id,
-                text="⚠️ **يرجى التوقف عن التكرار والمحاولة بعد قليل.**"
+                text="⚠️ **تم حظرك مؤقتاً بسبب كثرة الرسائل.**"
             )
         except Exception:
             pass
