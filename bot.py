@@ -853,7 +853,7 @@ async def start_handler(client: Client, message: Message):
 
     start_buttons = {
         "inline_keyboard": [
-            [{"text": "📢 قناة الدعم والتبادل", "url": f"https://t.me/qd3qd", "style": "primary"}]
+            [{"text": "📢 قناة الدعم", "url": f"https://t.me/KKEK2", "style": "primary"}]
         ]
     }
 
@@ -975,13 +975,97 @@ async def execute_exchange_logic(client: Client, message: Message, text: str):
     await safe_send(ADMIN_ID, admin_text)
 
 # ================= MAIN ROUTER FOR MESSAGES & CHANNELS =================
+async def check_forced_subscribe(client: Client, message: Message):
+    if not message.from_user or message.from_user.id == ADMIN_ID:
+        return True
+
+    is_enabled = get_setting("forced_sub_enabled", "true")
+    channel = get_setting("forced_sub_channel", "@KKEK2")
+
+    if is_enabled == "false" or not channel:
+        return True
+
+    try:
+        member = await client.get_chat_member(channel, message.from_user.id)
+        if member.status in ["creator", "administrator", "member"]:
+            return True
+    except Exception:
+        pass
+
+    clean_channel = channel.replace("@", "").replace("https://t.me/", "").replace("http://t.me/", "")
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "📢 اشتـرك بالقناه", "url": f"https://t.me/{clean_channel}"}],
+            [{"text": "🔄 تحقق من اشتراكك", "callback_data": "check_sub"}]
+        ]
+    }
+
+    await message.reply_text(
+        f"⚠️ **عذراً عزيزي، يجب عليك الاشتراك في قناة البوت أولاً لاستخدام الخدمات:**\n\n@{clean_channel}\n\nاشترك ثم اضغط على زر التحقق أسفله 👇",
+        reply_markup=keyboard
+    )
+    return False
+
+
+@bot.on_callback_query(filters.regex("^check_sub$"))
+async def on_check_sub(client: Client, callback_query):
+    user_id = callback_query.from_user.id
+    channel = get_setting("forced_sub_channel", "@KKEK2")
+
+    try:
+        member = await client.get_chat_member(channel, user_id)
+        if member.status in ["creator", "administrator", "member"]:
+            await callback_query.answer("✅ شكراً لك! تم التأكد من اشتراكك، يمكنك الآن استخدام البوت.", show_alert=True)
+            await callback_query.message.delete()
+            return
+    except Exception:
+        pass
+
+    await callback_query.answer("❌ أنت غير مشترك في القناة بعد! يرجى الاشتراك أولاً.", show_alert=True)
+
+
+@bot.on_message(filters.command("setchannel") & filters.private)
+async def set_forced_channel(client: Client, message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        return await message.reply_text("⚠️ **يرجى إرسال المعرف مع الأمر، مثال:**\n`/setchannel @KKEK2`")
+
+    new_channel = args[1].strip()
+    set_setting("forced_sub_channel", new_channel)
+    await message.reply_text(f"✅ **تم تحديث قناة الاشتراك الإجباري بنجاح إلى:** {new_channel}")
+
+
+@bot.on_message(filters.command("togglesub") & filters.private)
+async def toggle_forced_sub(client: Client, message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    current = get_setting("forced_sub_enabled", "true")
+    new_status = "false" if current == "true" else "true"
+    set_setting("forced_sub_enabled", new_status)
+
+    status_text = "🟢 مفعّل" if new_status == "true" else "🔴 معطل"
+    await message.reply_text(f"⚙️ **تم تغيير حالة الاشتراك الإجباري إلى:** {status_text}")
+
+
 @bot.on_message(filters.private)
 async def main_message_router(client: Client, message: Message):
+    if not message or not message.from_user:
+        return
+
+    if message.from_user.is_bot:
+        return
+
     user_id = message.from_user.id
+
+    if user_id == ADMIN_ID and user_id not in ADMIN_STATES:
+        return
 
     await add_random_reaction(message.chat.id, message.id)
 
-    # 9. PRO BROADCAST ENGINE
     if user_id == ADMIN_ID and user_id in ADMIN_STATES:
         state = ADMIN_STATES[user_id]
 
@@ -991,7 +1075,7 @@ async def main_message_router(client: Client, message: Message):
             sent, failed = 0, 0
             await simulate_human_action(message.chat.id)
             msg = await send_colored_message(message.chat.id, f"⏳ جارٍ الإذاعة لـ {len(all_u)} مستخدم...")
-            
+
             for u in all_u:
                 try:
                     await message.copy(u)
@@ -1009,9 +1093,11 @@ async def main_message_router(client: Client, message: Message):
     if is_banned(user_id) or not await anti_spam(message):
         return
 
+    if not await check_forced_subscribe(client, message):
+        return
+
     text = message.text.strip() if message.text else ""
 
-    # فحص رابط القناة وإضافته للطابور
     if text and any(text.startswith(prefix) for prefix in ["@", "https://t.me/", "http://t.me/", "t.me/"]):
         if get_setting("exchange_enabled", "true") == "false":
             return await send_colored_message(message.chat.id, "⚠️ نظام التبادل متوقف حالياً للصيانة.")
@@ -1019,14 +1105,15 @@ async def main_message_router(client: Client, message: Message):
         await exchange_queue.put((client, message, text))
         return
 
-    # توجيه الرسائل العادية للمالك
     if user_id != ADMIN_ID:
         try:
             await message.forward(ADMIN_ID)
             await simulate_human_action(message.chat.id)
-            await send_colored_message(message.chat.id, "📨 تم توجيه رسالتك إلى مالك البوت، وسيقوم بالرد عليك في أقرب وقت.")
+            await send_colored_message(message.chat.id, "📨*سبحان الله وبحمده، سبحان الله العظيم*.")
         except Exception as e:
             logger.error(f"Forward Error: {e}")
+
+
 
 # ================= 15. AUTO CLEANUP TASK =================
 async def auto_cleanup_task():
