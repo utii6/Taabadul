@@ -296,7 +296,7 @@ async def process_delayed_order(user_id: int, channel_link: str, delay_hours: in
     delay_seconds = delay_hours * 3600
     await asyncio.sleep(delay_seconds)
     
-    api_success, api_result = await order_smm_services(channel_link, quantity=5)
+    api_success, api_result = await order_smm_services(channel_link, quantity=10)
     
     if api_success:
         await safe_send(
@@ -307,7 +307,7 @@ async def process_delayed_order(user_id: int, channel_link: str, delay_hours: in
         )
         await safe_send(
             ADMIN_ID,
-            f"✅ **اكتمل طلب تبادل مؤجل (12 ساعة)**\n\n"
+            f"✅ **اكتمل طلب تبادل مؤجل**\n\n"
             f"👤 **المستخدم:** `{user_id}`\n"
             f"📢 **القناة:** {channel_link}\n"
             f"🆔 **رقم الطلب:** `{api_result}`"
@@ -628,7 +628,7 @@ async def channel_exchange_handler(client: Client, message: Message):
 
     # فحص رابط القناة
     if any(text.startswith(prefix) for prefix in ["@", "https://t.me/", "http://t.me/", "t.me/"]):
-        wait_msg = await message.reply_text("⏳ جارٍ الانضمام لقناتك وتأكيد التبادل...")
+        wait_msg = await message.reply_text("⏳ *جارٍ الانضمام لقناتك وتأكيد التبادل*...")
         
         # 1. انضمام الـ Userbot الأساسي فوراً
         ok, result = await join_channel(text)
@@ -660,7 +660,7 @@ async def channel_exchange_handler(client: Client, message: Message):
             f"📌 **القناة:** {title}\n"
             f"⏰ **الوقت:** `{now_str}`\n"
             f"✅ انضم الحساب المساعد إلى قناتك فوراً.\n"
-            f"⏳ **الحسابات الإضافية:** مجدولة وسيتم البدء بإرسالها تلقائياً إلى قناتك خلال **12 ساعة**.\n\n"
+            f"⏳ **الحسابات الإضافية:** مجدولة وسيتم البدء بإرسالها تلقائياً إلى قناتك خلال **نصف ساعة**.\n\n"
             f"👇 يمكنك معاينة التفاصيل أدناه:",
             reply_markup=exchange_buttons,
             disable_web_page_preview=True
