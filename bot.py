@@ -345,52 +345,70 @@ def get_all_users():
 # ================= 12. ENHANCED ANTI SPAM SYSTEM =================
 def update_spam(user_id: int):
     check_db_health()
-    now = int(time.time())
+    now_ts = int(time.time())
+    now_dt = datetime.now()
+
     cursor.execute("SELECT messages, last_message, temp_ban_until FROM spam WHERE user_id=%s", (user_id,))
     row = cursor.fetchone()
 
-    if row and row["temp_ban_until"] and row["temp_ban_until"] > datetime.now():
-        return -1  # حظر مؤقت فعال
+    # إذا كان محظوراً مؤقتاً حالياً
+    if row and row["temp_ban_until"] and row["temp_ban_until"] > now_dt:
+        return -2  # رمز خاص: "محظور حالياً" (حتى لا نكرر إرسال الرسالة)
 
+    # إذا لم يكن موجوداً
     if row is None:
         cursor.execute(
             "INSERT INTO spam (user_id, messages, last_message) VALUES (%s, 1, %s)",
-            (user_id, now)
+            (user_id, now_ts)
         )
         return 1
 
-    if now - row["last_message"] > 10:
+    # إعادة إعادة العداد إذا مرت أكثر من 10 ثوانٍ على آخر رسالة
+    if now_ts - row["last_message"] > 10:
         cursor.execute(
             "UPDATE spam SET messages=1, last_message=%s WHERE user_id=%s",
-            (now, user_id)
+            (now_ts, user_id)
         )
         return 1
 
     count = row["messages"] + 1
-    if count >= 8: # معاقبة بالسبام وتفعيل حظر مؤقت لـ 5 دقائق
-        ban_until = datetime.now() + timedelta(minutes=5)
+
+    # إذا تجاوز الحد المسموح (8 رسائل في أقل من 10 ثوانٍ) -> تفعيل الحظر لأول مرة
+    if count >= 8:
+        ban_until = now_dt + timedelta(minutes=5)
         cursor.execute(
             "UPDATE spam SET messages=%s, last_message=%s, temp_ban_until=%s WHERE user_id=%s",
-            (count, now, ban_until, user_id)
+            (count, now_ts, ban_until, user_id)
         )
         log_event("SPAM_TEMP_BAN", f"User {user_id} temporarily banned for spam.")
-        return -1
+        return -1  # رمز خاص: "تم حظره للتو" (لإرسال التنبيه مرة واحدة فقط)
 
     cursor.execute(
         "UPDATE spam SET messages=%s, last_message=%s WHERE user_id=%s",
-        (count, now, user_id)
+        (count, now_ts, user_id)
     )
     return count
 
-SPAM_LIMIT = 5
 
 async def anti_spam(message: Message):
+    if not message or not message.from_user:
+        return True
+
+    # 1. استثناء الأدمن تماماً من فحص السبام
+    if message.from_user.id == ADMIN_ID:
+        return True
+
     if get_setting("anti_spam", "true") == "false":
         return True
 
     user_id = message.from_user.id
     status = update_spam(user_id)
 
+    # 2. إذا كان محظوراً بالفعل مسبقاً -> نتجاهل الرسالة تماماً ولا نرسل شيئاً لمنع التكرار
+    if status == -2:
+        return False
+
+    # 3. إذا تم حظره في هذه اللحظة فقط -> نرسل التحذير مرة واحدة فقط
     if status == -1:
         await send_colored_message(
             chat_id=message.chat.id,
@@ -398,16 +416,6 @@ async def anti_spam(message: Message):
         )
         return False
 
-    if status >= SPAM_LIMIT:
-        try:
-            await simulate_human_action(message.chat.id, 1.0)
-            await send_colored_message(
-                chat_id=message.chat.id,
-                text="⚠️ **تم حظرك مؤقتاً بسبب كثرة الرسائل.**"
-            )
-        except Exception:
-            pass
-        return False
     return True
 
 # ================= HUMAN ACTIONS & EMOJI REACTIONS =================
