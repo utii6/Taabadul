@@ -138,8 +138,14 @@ def check_db_health():
         cursor = db.cursor()
 
 # ================= DATABASE TABLES INITIALIZATION =================
+# ================= DATABASE TABLES INITIALIZATION =================
 check_db_health()
 
+# ⚠️ اختياري: إذا كنت تريد مسح الجداول القديمة وإعادة إنشائها من الصفر افتح التعليق عن السطرين القادمين:
+# cursor.execute("DROP TABLE IF EXISTS spam CASCADE;")
+# cursor.execute("DROP TABLE IF EXISTS users CASCADE;")
+
+# 1. جدول الإعدادات الداخلية
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS settings(
     key TEXT PRIMARY KEY,
@@ -147,6 +153,7 @@ CREATE TABLE IF NOT EXISTS settings(
 )
 """)
 
+# 2. جدول المستخدمين المحدث
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users(
     user_id BIGINT PRIMARY KEY,
@@ -159,6 +166,7 @@ CREATE TABLE IF NOT EXISTS users(
 )
 """)
 
+# 3. جدول القنوات المحدث
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS channels(
     id SERIAL PRIMARY KEY,
@@ -169,12 +177,7 @@ CREATE TABLE IF NOT EXISTS channels(
 )
 """)
 
-try:
-    cursor.execute("ALTER TABLE spam ADD COLUMN IF NOT EXISTS temp_ban_until TIMESTAMP DEFAULT NULL;")
-except Exception:
-    pass
-
-
+# 4. جدول مكافحة السبام المحدث
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS spam(
     user_id BIGINT PRIMARY KEY,
@@ -184,7 +187,7 @@ CREATE TABLE IF NOT EXISTS spam(
 )
 """)
 
-# 1. TABLE FOR SYSTEM LOGS
+# 5. جدول سجلات النظام
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS system_logs(
     id SERIAL PRIMARY KEY,
@@ -194,13 +197,24 @@ CREATE TABLE IF NOT EXISTS system_logs(
 )
 """)
 
-# 5. TABLE FOR DETAILED METRICS & STATS
+# 6. جدول الإحصائيات والمقاييس
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS metrics(
     key TEXT PRIMARY KEY,
     value_count BIGINT DEFAULT 0
 )
 """)
+
+# ================= AUTOMATIC SCHEMA MIGRATIONS =================
+# حماية إضافية: إضافة الأعمدة الجديدة تلقائياً في حال وجود جداول قديمة مخزنة مسبقاً
+try:
+    cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP DEFAULT NOW();")
+    cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS usage_count INT DEFAULT 0;")
+    cursor.execute("ALTER TABLE channels ADD COLUMN IF NOT EXISTS last_order_time TIMESTAMP DEFAULT NOW() - INTERVAL '12 hours';")
+    cursor.execute("ALTER TABLE spam ADD COLUMN IF NOT EXISTS temp_ban_until TIMESTAMP DEFAULT NULL;")
+except Exception as e:
+    logger.warning(f"Migration check skipped/passed: {e}")
+
 
 # ================= 1. LOGGING & METRICS SYSTEM =================
 def log_event(event_type: str, details: str):
