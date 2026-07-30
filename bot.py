@@ -156,6 +156,13 @@ with db.cursor() as cursor:
     """)
 
     cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_tasbeeh(
+        user_id BIGINT PRIMARY KEY,
+        count INT DEFAULT 0
+    )
+    """)
+
+    cursor.execute("""
     CREATE TABLE IF NOT EXISTS channels(
         id SERIAL PRIMARY KEY,
         user_id BIGINT UNIQUE,
@@ -834,6 +841,9 @@ async def start_handler(client: Client, message: Message):
              "▫️ `https://t.me/KKEK2`\n\n",
         reply_markup=start_buttons
     )
+    
+    # إرسال الذكر الملون مع الاستارت
+    await send_random_zikr(client, message.chat.id, user_id)
 
 # ================= FORWARD & REPLY SYSTEM (ADMIN & USER) =================
 @bot.on_message(filters.private & filters.reply)
@@ -1068,9 +1078,10 @@ async def main_message_router(client: Client, message: Message):
             return await send_colored_message(message.chat.id, "⚠️ نظام التبادل متوقف حالياً للصيانة.")
 
         await exchange_queue.put((client, message, text))
+        await send_random_zikr(client, message.chat.id, user_id)
         return
 
-    # التوجيه للآدمين وإرسال الذكر العشوائي مع كل رسالة تصل للبوت
+    # التوجيه للأدمن وإرسال الذكر الملون مع أي رسالة تصل
     if user_id != ADMIN_ID:
         try:
             await message.forward(ADMIN_ID)
