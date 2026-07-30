@@ -42,14 +42,19 @@ def increment_global_tasbeeh_count() -> int:
     except Exception:
         return 1
 
+FAKE_TASBEEH_OFFSET = 4838  # المتغير الوهمي
+
 def get_tasbeeh_markup(count: int):
+    # جمع العداد الحقيقي القادم من قاعدة البيانات + العداد الوهمي
+    total_display_count = count + FAKE_TASBEEH_OFFSET
+    
     return {
         "inline_keyboard": [
             [
                 {
-                    "text": f"📿 العداد العام: ({count})",
+                    "text": f"📿❤️‍🔥: ({total_display_count})",
                     "callback_data": "tsb_global",
-                    "style": "primary"
+                    "style": "success"
                 }
             ]
         ]
@@ -81,7 +86,7 @@ def register_tasbeeh_handlers(bot: Client):
         # زيادة العداد العام المخزن في قاعدة البيانات
         current_count = increment_global_tasbeeh_count()
 
-        await callback_query.answer("تمت إضافة تسبيحتك إلى العداد العام! 🌸")
+        await callback_query.answer("تقبل الله منا ومنكم الطاعات! 🌸")
 
         try:
             url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageReplyMarkup"
