@@ -20,13 +20,14 @@ from pyrogram.errors import (
     UserNotParticipant,
     PeerIdInvalid
 )
-
 from pyrogram.types import (
     Message,
     CallbackQuery,
     InlineKeyboardMarkup,
     InlineKeyboardButton
 )
+
+from tasbeeh import send_random_zikr, register_tasbeeh_handlers
 
 # ================= 1 & 21. LOGGING & CODE ORGANIZATION SETUP =================
 logging.basicConfig(
@@ -59,8 +60,8 @@ HUMAN_ACTIONS = [
 
 ADMIN_STATES = {}
 
-# 13. QUEUE SYSTEM FOR REQUESTS
-exchange_queue = asyncio.Queue()
+# 13. QUEUE SYSTEM FOR REQUESTS (Safe Boundary Limit)
+exchange_queue = asyncio.Queue(maxsize=1000)
 
 # ================= PYROGRAM CLIENTS =================
 bot = Client(
@@ -70,6 +71,8 @@ bot = Client(
     bot_token=BOT_TOKEN,
     in_memory=True
 )
+
+register_tasbeeh_handlers(bot)
 
 userbot = Client(
     "Userbot",
@@ -89,7 +92,7 @@ async def send_colored_message(chat_id: int, text: str, reply_markup: dict = Non
         "parse_mode": parse_mode
     }
     if reply_markup:
-        payload["reply_markup"] = json.dumps(reply_markup)
+        payload["reply_markup"] = reply_markup
 
     try:
         async with ClientSession() as session:
@@ -101,12 +104,6 @@ async def send_colored_message(chat_id: int, text: str, reply_markup: dict = Non
     except Exception as e:
         logger.error(f"Failed to send colored message via Bot API: {e}")
         return None
-
-def create_styled_button(text: str, url: str = None, callback_data: str = None):
-    """دالة احتياطية لإنشاء أزرار Pyrogram القياسية عند الحاجة"""
-    if url:
-        return InlineKeyboardButton(text=text, url=url)
-    return InlineKeyboardButton(text=text, callback_data=callback_data)
 
 # ================= 16. DATABASE CONNECTION & AUTO-RECONNECT =================
 def get_db_connection():
@@ -125,222 +122,221 @@ def get_db_connection():
             time.sleep(3)
 
 db = get_db_connection()
-cursor = db.cursor()
 
 def check_db_health():
     """16 & 19. التأكد من سلامة قاعدة البيانات وإعادة الاتصال عند انقطاعها"""
-    global db, cursor
+    global db
     try:
-        cursor.execute("SELECT 1;")
+        with db.cursor() as cursor:
+            cursor.execute("SELECT 1;")
     except Exception:
         logger.warning("Database connection lost. Reconnecting...")
         db = get_db_connection()
-        cursor = db.cursor()
 
-# ================= DATABASE TABLES INITIALIZATION =================
 # ================= DATABASE TABLES INITIALIZATION =================
 check_db_health()
+with db.cursor() as cursor:
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS settings(
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )
+    """)
 
-# ⚠️ اختياري: إذا كنت تريد مسح الجداول القديمة وإعادة إنشائها من الصفر افتح التعليق عن السطرين القادمين:
-# cursor.execute("DROP TABLE IF EXISTS spam CASCADE;")
-# cursor.execute("DROP TABLE IF EXISTS users CASCADE;")
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users(
+        user_id BIGINT PRIMARY KEY,
+        username TEXT,
+        full_name TEXT,
+        is_banned BOOLEAN DEFAULT FALSE,
+        join_date TIMESTAMP DEFAULT NOW(),
+        last_active TIMESTAMP DEFAULT NOW(),
+        usage_count INT DEFAULT 0
+    )
+    """)
 
-# 1. جدول الإعدادات الداخلية
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS settings(
-    key TEXT PRIMARY KEY,
-    value TEXT
-)
-""")
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS channels(
+        id SERIAL PRIMARY KEY,
+        user_id BIGINT UNIQUE,
+        channel TEXT,
+        last_order_time TIMESTAMP DEFAULT NOW() - INTERVAL '12 hours',
+        joined_at TIMESTAMP DEFAULT NOW()
+    )
+    """)
 
-# 2. جدول المستخدمين المحدث
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users(
-    user_id BIGINT PRIMARY KEY,
-    username TEXT,
-    full_name TEXT,
-    is_banned BOOLEAN DEFAULT FALSE,
-    join_date TIMESTAMP DEFAULT NOW(),
-    last_active TIMESTAMP DEFAULT NOW(),
-    usage_count INT DEFAULT 0
-)
-""")
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS spam(
+        user_id BIGINT PRIMARY KEY,
+        messages INTEGER DEFAULT 0,
+        last_message BIGINT DEFAULT 0,
+        temp_ban_until TIMESTAMP DEFAULT NULL
+    )
+    """)
 
-# 3. جدول القنوات المحدث
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS channels(
-    id SERIAL PRIMARY KEY,
-    user_id BIGINT UNIQUE,
-    channel TEXT,
-    last_order_time TIMESTAMP DEFAULT NOW() - INTERVAL '12 hours',
-    joined_at TIMESTAMP DEFAULT NOW()
-)
-""")
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS system_logs(
+        id SERIAL PRIMARY KEY,
+        event_type TEXT,
+        details TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+    )
+    """)
 
-# 4. جدول مكافحة السبام المحدث
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS spam(
-    user_id BIGINT PRIMARY KEY,
-    messages INTEGER DEFAULT 0,
-    last_message BIGINT DEFAULT 0,
-    temp_ban_until TIMESTAMP DEFAULT NULL
-)
-""")
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS metrics(
+        key TEXT PRIMARY KEY,
+        value_count BIGINT DEFAULT 0
+    )
+    """)
 
-# 5. جدول سجلات النظام
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS system_logs(
-    id SERIAL PRIMARY KEY,
-    event_type TEXT,
-    details TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
-)
-""")
-
-# 6. جدول الإحصائيات والمقاييس
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS metrics(
-    key TEXT PRIMARY KEY,
-    value_count BIGINT DEFAULT 0
-)
-""")
-
-# ================= AUTOMATIC SCHEMA MIGRATIONS =================
-# حماية إضافية: إضافة الأعمدة الجديدة تلقائياً في حال وجود جداول قديمة مخزنة مسبقاً
-try:
-    cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP DEFAULT NOW();")
-    cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS usage_count INT DEFAULT 0;")
-    cursor.execute("ALTER TABLE channels ADD COLUMN IF NOT EXISTS last_order_time TIMESTAMP DEFAULT NOW() - INTERVAL '12 hours';")
-    cursor.execute("ALTER TABLE spam ADD COLUMN IF NOT EXISTS temp_ban_until TIMESTAMP DEFAULT NULL;")
-except Exception as e:
-    logger.warning(f"Migration check skipped/passed: {e}")
-
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP DEFAULT NOW();")
+        cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS usage_count INT DEFAULT 0;")
+        cursor.execute("ALTER TABLE channels ADD COLUMN IF NOT EXISTS last_order_time TIMESTAMP DEFAULT NOW() - INTERVAL '12 hours';")
+        cursor.execute("ALTER TABLE spam ADD COLUMN IF NOT EXISTS temp_ban_until TIMESTAMP DEFAULT NULL;")
+    except Exception as e:
+        logger.warning(f"Migration check skipped/passed: {e}")
 
 # ================= 1. LOGGING & METRICS SYSTEM =================
 def log_event(event_type: str, details: str):
     check_db_health()
     try:
-        cursor.execute(
-            "INSERT INTO system_logs (event_type, details) VALUES (%s, %s)",
-            (event_type, details)
-        )
+        with db.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO system_logs (event_type, details) VALUES (%s, %s)",
+                (event_type, details)
+            )
     except Exception as e:
         logger.error(f"Failed to log event to DB: {e}")
 
 def increment_metric(key: str, amount: int = 1):
     check_db_health()
     try:
-        cursor.execute("""
-        INSERT INTO metrics (key, value_count) VALUES (%s, %s)
-        ON CONFLICT (key) DO UPDATE SET value_count = metrics.value_count + EXCLUDED.value_count;
-        """, (key, amount))
+        with db.cursor() as cursor:
+            cursor.execute("""
+            INSERT INTO metrics (key, value_count) VALUES (%s, %s)
+            ON CONFLICT (key) DO UPDATE SET value_count = metrics.value_count + EXCLUDED.value_count;
+            """, (key, amount))
     except Exception as e:
         logger.error(f"Failed to increment metric {key}: {e}")
 
 def get_metric(key: str) -> int:
     check_db_health()
     try:
-        cursor.execute("SELECT value_count FROM metrics WHERE key=%s", (key,))
-        row = cursor.fetchone()
-        return row["value_count"] if row else 0
+        with db.cursor() as cursor:
+            cursor.execute("SELECT value_count FROM metrics WHERE key=%s", (key,))
+            row = cursor.fetchone()
+            return row["value_count"] if row else 0
     except Exception:
         return 0
 
 # ================= 2. INTERNAL SETTINGS MANAGER =================
 def get_setting(key: str, default: str = "true"):
     check_db_health()
-    cursor.execute("SELECT value FROM settings WHERE key=%s", (key,))
-    row = cursor.fetchone()
-    return row["value"] if row else default
+    with db.cursor() as cursor:
+        cursor.execute("SELECT value FROM settings WHERE key=%s", (key,))
+        row = cursor.fetchone()
+        return row["value"] if row else default
 
 def set_setting(key: str, value: str):
     check_db_health()
-    cursor.execute(
-        """
-        INSERT INTO settings(key,value)
-        VALUES(%s,%s)
-        ON CONFLICT(key)
-        DO UPDATE SET value=EXCLUDED.value
-        """,
-        (key, str(value))
-    )
+    with db.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO settings(key,value)
+            VALUES(%s,%s)
+            ON CONFLICT(key)
+            DO UPDATE SET value=EXCLUDED.value
+            """,
+            (key, str(value))
+        )
     log_event("SETTINGS_UPDATE", f"Setting '{key}' changed to '{value}'")
 
 # ================= DATABASE FUNCTIONS =================
 def add_or_update_user(user_id: int, username: str, full_name: str):
     check_db_health()
-    cursor.execute("SELECT user_id FROM users WHERE user_id=%s", (user_id,))
-    exists = cursor.fetchone()
+    with db.cursor() as cursor:
+        cursor.execute("SELECT user_id FROM users WHERE user_id=%s", (user_id,))
+        exists = cursor.fetchone()
 
-    cursor.execute(
-        """
-        INSERT INTO users (user_id, username, full_name, last_active, usage_count)
-        VALUES (%s, %s, %s, NOW(), 1)
-        ON CONFLICT (user_id) 
-        DO UPDATE SET 
-            username=EXCLUDED.username, 
-            full_name=EXCLUDED.full_name,
-            last_active=NOW(),
-            usage_count=users.usage_count + 1
-        """,
-        (user_id, username, full_name)
-    )
-    return exists is None
+        cursor.execute(
+            """
+            INSERT INTO users (user_id, username, full_name, last_active, usage_count)
+            VALUES (%s, %s, %s, NOW(), 1)
+            ON CONFLICT (user_id) 
+            DO UPDATE SET 
+                username=EXCLUDED.username, 
+                full_name=EXCLUDED.full_name,
+                last_active=NOW(),
+                usage_count=users.usage_count + 1
+            """,
+            (user_id, username, full_name)
+        )
+        return exists is None
 
 def is_banned(user_id: int):
     check_db_health()
-    cursor.execute("SELECT is_banned FROM users WHERE user_id=%s", (user_id,))
-    row = cursor.fetchone()
-    return row["is_banned"] if row else False
+    with db.cursor() as cursor:
+        cursor.execute("SELECT is_banned FROM users WHERE user_id=%s", (user_id,))
+        row = cursor.fetchone()
+        return row["is_banned"] if row else False
 
 def set_ban_status(user_id: int, banned: bool):
     check_db_health()
-    cursor.execute(
-        "UPDATE users SET is_banned=%s WHERE user_id=%s",
-        (banned, user_id)
-    )
+    with db.cursor() as cursor:
+        cursor.execute(
+            "UPDATE users SET is_banned=%s WHERE user_id=%s",
+            (banned, user_id)
+        )
     log_event("USER_BAN_TOGGLE", f"User {user_id} ban set to {banned}")
 
 def get_channel_data(user_id: int):
     check_db_health()
-    cursor.execute("SELECT channel, last_order_time FROM channels WHERE user_id=%s", (user_id,))
-    return cursor.fetchone()
+    with db.cursor() as cursor:
+        cursor.execute("SELECT channel, last_order_time FROM channels WHERE user_id=%s", (user_id,))
+        return cursor.fetchone()
 
 def update_channel_order(user_id: int, channel: str):
     check_db_health()
-    cursor.execute(
-        """
-        INSERT INTO channels (user_id, channel, last_order_time)
-        VALUES (%s, %s, NOW())
-        ON CONFLICT (user_id)
-        DO UPDATE SET channel=EXCLUDED.channel, last_order_time=NOW()
-        """,
-        (user_id, channel)
-    )
+    with db.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO channels (user_id, channel, last_order_time)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (user_id)
+            DO UPDATE SET channel=EXCLUDED.channel, last_order_time=NOW()
+            """,
+            (user_id, channel)
+        )
 
 def remove_channel(user_id: int):
     check_db_health()
-    cursor.execute("DELETE FROM channels WHERE user_id=%s", (user_id,))
+    with db.cursor() as cursor:
+        cursor.execute("DELETE FROM channels WHERE user_id=%s", (user_id,))
     log_event("CHANNEL_REMOVE", f"Channel removed for user {user_id}")
 
 def get_channel(user_id: int):
     check_db_health()
-    cursor.execute("SELECT channel FROM channels WHERE user_id=%s", (user_id,))
-    row = cursor.fetchone()
-    return row["channel"] if row else None
+    with db.cursor() as cursor:
+        cursor.execute("SELECT channel FROM channels WHERE user_id=%s", (user_id,))
+        row = cursor.fetchone()
+        return row["channel"] if row else None
 
 def get_stats():
     check_db_health()
-    cursor.execute("SELECT COUNT(*) as total_users FROM users;")
-    users_count = cursor.fetchone()["total_users"]
-    cursor.execute("SELECT COUNT(*) as total_channels FROM channels;")
-    channels_count = cursor.fetchone()["total_channels"]
-    return users_count, channels_count
+    with db.cursor() as cursor:
+        cursor.execute("SELECT COUNT(*) as total_users FROM users;")
+        users_count = cursor.fetchone()["total_users"]
+        cursor.execute("SELECT COUNT(*) as total_channels FROM channels;")
+        channels_count = cursor.fetchone()["total_channels"]
+        return users_count, channels_count
 
 def get_all_users():
     check_db_health()
-    cursor.execute("SELECT user_id FROM users WHERE is_banned=FALSE;")
-    return [row["user_id"] for row in cursor.fetchall()]
+    with db.cursor() as cursor:
+        cursor.execute("SELECT user_id FROM users WHERE is_banned=FALSE;")
+        return [row["user_id"] for row in cursor.fetchall()]
 
 # ================= 12. ENHANCED ANTI SPAM SYSTEM =================
 def update_spam(user_id: int):
@@ -348,53 +344,48 @@ def update_spam(user_id: int):
     now_ts = int(time.time())
     now_dt = datetime.now()
 
-    cursor.execute("SELECT messages, last_message, temp_ban_until FROM spam WHERE user_id=%s", (user_id,))
-    row = cursor.fetchone()
+    with db.cursor() as cursor:
+        cursor.execute("SELECT messages, last_message, temp_ban_until FROM spam WHERE user_id=%s", (user_id,))
+        row = cursor.fetchone()
 
-    # إذا كان محظوراً مؤقتاً حالياً
-    if row and row["temp_ban_until"] and row["temp_ban_until"] > now_dt:
-        return -2  # رمز خاص: "محظور حالياً" (حتى لا نكرر إرسال الرسالة)
+        if row and row["temp_ban_until"] and row["temp_ban_until"] > now_dt:
+            return -2 
 
-    # إذا لم يكن موجوداً
-    if row is None:
+        if row is None:
+            cursor.execute(
+                "INSERT INTO spam (user_id, messages, last_message) VALUES (%s, 1, %s)",
+                (user_id, now_ts)
+            )
+            return 1
+
+        if now_ts - row["last_message"] > 10:
+            cursor.execute(
+                "UPDATE spam SET messages=1, last_message=%s WHERE user_id=%s",
+                (now_ts, user_id)
+            )
+            return 1
+
+        count = row["messages"] + 1
+
+        if count >= 8:
+            ban_until = now_dt + timedelta(minutes=5)
+            cursor.execute(
+                "UPDATE spam SET messages=%s, last_message=%s, temp_ban_until=%s WHERE user_id=%s",
+                (count, now_ts, ban_until, user_id)
+            )
+            log_event("SPAM_TEMP_BAN", f"User {user_id} temporarily banned for spam.")
+            return -1 
+
         cursor.execute(
-            "INSERT INTO spam (user_id, messages, last_message) VALUES (%s, 1, %s)",
-            (user_id, now_ts)
+            "UPDATE spam SET messages=%s, last_message=%s WHERE user_id=%s",
+            (count, now_ts, user_id)
         )
-        return 1
-
-    # إعادة إعادة العداد إذا مرت أكثر من 10 ثوانٍ على آخر رسالة
-    if now_ts - row["last_message"] > 10:
-        cursor.execute(
-            "UPDATE spam SET messages=1, last_message=%s WHERE user_id=%s",
-            (now_ts, user_id)
-        )
-        return 1
-
-    count = row["messages"] + 1
-
-    # إذا تجاوز الحد المسموح (8 رسائل في أقل من 10 ثوانٍ) -> تفعيل الحظر لأول مرة
-    if count >= 8:
-        ban_until = now_dt + timedelta(minutes=5)
-        cursor.execute(
-            "UPDATE spam SET messages=%s, last_message=%s, temp_ban_until=%s WHERE user_id=%s",
-            (count, now_ts, ban_until, user_id)
-        )
-        log_event("SPAM_TEMP_BAN", f"User {user_id} temporarily banned for spam.")
-        return -1  # رمز خاص: "تم حظره للتو" (لإرسال التنبيه مرة واحدة فقط)
-
-    cursor.execute(
-        "UPDATE spam SET messages=%s, last_message=%s WHERE user_id=%s",
-        (count, now_ts, user_id)
-    )
-    return count
-
+        return count
 
 async def anti_spam(message: Message):
     if not message or not message.from_user:
         return True
 
-    # 1. استثناء الأدمن تماماً من فحص السبام
     if message.from_user.id == ADMIN_ID:
         return True
 
@@ -404,11 +395,9 @@ async def anti_spam(message: Message):
     user_id = message.from_user.id
     status = update_spam(user_id)
 
-    # 2. إذا كان محظوراً بالفعل مسبقاً -> نتجاهل الرسالة تماماً ولا نرسل شيئاً لمنع التكرار
     if status == -2:
         return False
 
-    # 3. إذا تم حظره في هذه اللحظة فقط -> نرسل التحذير مرة واحدة فقط
     if status == -1:
         await send_colored_message(
             chat_id=message.chat.id,
@@ -428,20 +417,13 @@ async def simulate_human_action(chat_id: int, duration: float = None):
     except Exception as e:
         logger.debug(f"Chat action error: {e}")
 
-async def add_random_reaction(chat_id: int, message_id: int):
+async def add_random_reaction(message: Message):
+    """تفاعلات مستقرة ومباشرة عبر Pyrogram"""
     try:
         emoji = random.choice(REACTION_EMOJIS)
-        async with ClientSession() as session:
-            await session.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/setMessageReaction",
-                data={
-                    "chat_id": chat_id,
-                    "message_id": message_id,
-                    "reaction": json.dumps([{"type": "emoji", "emoji": emoji}])
-                }
-            )
+        await message.react(emoji)
     except Exception as e:
-        logger.exception(e)
+        logger.debug(f"Reaction Error: {e}")
 
 # ================= 14. RETRY & ROBUST SMM API CALLS =================
 async def order_smm_services(target_link: str, quantity: int = 10, retries: int = 3):
@@ -531,20 +513,8 @@ async def join_channel(channel: str):
         log_event("USERBOT_JOIN_EXCEPTION", f"Channel {channel}: {e}")
         return False, f"❌ تعذر الانضمام: {str(e)}"
 
-async def leave_channel(channel):
-    try:
-        await userbot.leave_chat(channel)
-        log_event("USERBOT_LEAVE", f"Left channel {channel}")
-        return True
-    except FloodWait as e:
-        await asyncio.sleep(e.value)
-        return await leave_channel(channel)
-    except Exception:
-        return False
-
 # ================= 6 & 20. ADMIN PANEL & COLORED KEYBOARDS =================
 def get_admin_main_keyboard():
-    """لوحة تحكم احترافية مقسمة ومصممة بأزرار ملونة موحدة"""
     return {
         "inline_keyboard": [
             [
@@ -571,7 +541,7 @@ async def admin_panel_cmd(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    await add_random_reaction(message.chat.id, message.id)
+    await add_random_reaction(message)
     await simulate_human_action(message.chat.id)
 
     await send_colored_message(
@@ -587,7 +557,6 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
 
     data = query.data
 
-    # 5 & 6. ADVANCED STATS
     if data == "admin_stats":
         u_count, c_count = get_stats()
         total_display_users = u_count + FAKE_USERS_OFFSET
@@ -608,7 +577,6 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
         await query.answer()
         await send_colored_message(query.message.chat.id, stats_text, reply_markup=buttons)
 
-    # 2. INTERNAL SETTINGS TOGGLE
     elif data == "admin_settings":
         spam_status = get_setting("anti_spam", "true")
         ex_status = get_setting("exchange_enabled", "true")
@@ -634,16 +602,15 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
         new_val = "false" if curr_val == "true" else "true"
         set_setting(setting_key, new_val)
         await query.answer("✅ تم تحديث الإعداد بنجاح!", show_alert=True)
-        # Refresh Settings View
         return await admin_callbacks(client, query)
 
-    # 3. BACKUP SYSTEM
     elif data == "admin_backup":
         check_db_health()
-        cursor.execute("SELECT user_id, username, full_name, join_date FROM users;")
-        all_users_db = cursor.fetchall()
-        cursor.execute("SELECT user_id, channel, last_order_time FROM channels;")
-        all_channels_db = cursor.fetchall()
+        with db.cursor() as cursor:
+            cursor.execute("SELECT user_id, username, full_name, join_date FROM users;")
+            all_users_db = cursor.fetchall()
+            cursor.execute("SELECT user_id, channel, last_order_time FROM channels;")
+            all_channels_db = cursor.fetchall()
 
         backup_data = {
             "timestamp": str(datetime.now()),
@@ -659,11 +626,11 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
         await bot.send_document(ADMIN_ID, backup_filename, caption="📦 **نسخة احتياطية كاملة لقاعدة البيانات**")
         os.remove(backup_filename)
 
-    # 1. LOGS SYSTEM
     elif data == "admin_logs":
         check_db_health()
-        cursor.execute("SELECT event_type, details, created_at FROM system_logs ORDER BY id DESC LIMIT 10;")
-        logs_rows = cursor.fetchall()
+        with db.cursor() as cursor:
+            cursor.execute("SELECT event_type, details, created_at FROM system_logs ORDER BY id DESC LIMIT 10;")
+            logs_rows = cursor.fetchall()
         
         logs_text = "📜 **آخر 10 أحداث مسجلة في النظام:**\n\n"
         for l in logs_rows:
@@ -673,7 +640,6 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
         await query.answer()
         await send_colored_message(query.message.chat.id, logs_text, reply_markup=buttons)
 
-    # 9. BROADCAST SYSTEM
     elif data == "admin_broadcast_menu":
         ADMIN_STATES[ADMIN_ID] = "WAITING_FOR_BROADCAST"
         await query.answer()
@@ -684,7 +650,6 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
             reply_markup=buttons
         )
 
-    # 8. USERS MANAGEMENT MENU
     elif data == "admin_users_menu":
         await query.answer()
         buttons = {"inline_keyboard": [[{"text": "🔙 العودة للوحة", "callback_data": "admin_home", "style": "primary"}]]}
@@ -697,7 +662,6 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
             reply_markup=buttons
         )
 
-    # 7. CHANNELS MANAGEMENT MENU
     elif data == "admin_channels_menu":
         await query.answer()
         buttons = {"inline_keyboard": [[{"text": "🔙 العودة للوحة", "callback_data": "admin_home", "style": "primary"}]]}
@@ -731,8 +695,10 @@ async def get_user_info_cmd(client: Client, message: Message):
     try:
         target_id = int(message.text.split()[1])
         check_db_health()
-        cursor.execute("SELECT * FROM users WHERE user_id=%s", (target_id,))
-        user_data = cursor.fetchone()
+        with db.cursor() as cursor:
+            cursor.execute("SELECT * FROM users WHERE user_id=%s", (target_id,))
+            user_data = cursor.fetchone()
+
         if not user_data:
             return await send_colored_message(message.chat.id, "❌ لم يتم العثور على هذا المستخدم في قاعدة البيانات.")
 
@@ -787,7 +753,7 @@ async def del_channel_cmd(client: Client, message: Message):
 async def ban_user_cmd(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-    await add_random_reaction(message.chat.id, message.id)
+    await add_random_reaction(message)
     await simulate_human_action(message.chat.id)
     try:
         target_id = int(message.text.split()[1])
@@ -800,7 +766,7 @@ async def ban_user_cmd(client: Client, message: Message):
 async def unban_user_cmd(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-    await add_random_reaction(message.chat.id, message.id)
+    await add_random_reaction(message)
     await simulate_human_action(message.chat.id)
     try:
         target_id = int(message.text.split()[1])
@@ -812,7 +778,7 @@ async def unban_user_cmd(client: Client, message: Message):
 @bot.on_message(filters.private & filters.command("cancel"))
 async def cancel_admin_state(client: Client, message: Message):
     if message.from_user.id == ADMIN_ID and ADMIN_ID in ADMIN_STATES:
-        await add_random_reaction(message.chat.id, message.id)
+        await add_random_reaction(message)
         await simulate_human_action(message.chat.id)
         ADMIN_STATES.pop(ADMIN_ID, None)
         await send_colored_message(message.chat.id, "✅ تم إلغاء العملية والعودة للوضع الطبيعي.")
@@ -822,9 +788,12 @@ async def cancel_admin_state(client: Client, message: Message):
 async def start_handler(client: Client, message: Message):
     user_id = message.from_user.id
 
-    await add_random_reaction(message.chat.id, message.id)
+    await add_random_reaction(message)
 
     if is_banned(user_id) or not await anti_spam(message):
+        return
+
+    if not await check_forced_subscribe(client, message):
         return
 
     username = message.from_user.username or ""
@@ -872,7 +841,7 @@ async def admin_reply_to_user_handler(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
         return
 
-    await add_random_reaction(message.chat.id, message.id)
+    await add_random_reaction(message)
 
     reply_to = message.reply_to_message
     if reply_to and reply_to.forward_from:
@@ -888,7 +857,6 @@ async def admin_reply_to_user_handler(client: Client, message: Message):
 
 # ================= 13. WORKER & QUEUE FOR EXCHANGE PROCESS =================
 async def process_exchange_queue():
-    """معالج الطوابير لتنفيذ طلبات التبادل بالتتابع دون كسر السيرفر"""
     while True:
         task = await exchange_queue.get()
         client, message, text = task
@@ -909,7 +877,6 @@ async def execute_exchange_logic(client: Client, message: Message, text: str):
 
     if not ok:
         await simulate_human_action(message.chat.id)
-        # 11. SMART ERROR HANDLER WITH SOLUTIONS
         err_msg = (
             f"❌ **فشل عملية الانضمام!**\n\n"
             f"**السبب:** {result}\n\n"
@@ -937,7 +904,8 @@ async def execute_exchange_logic(client: Client, message: Message, text: str):
         asyncio.create_task(schedule_12h_notification(user_id, delay_seconds=43200))
     else:
         check_db_health()
-        cursor.execute("UPDATE channels SET channel=%s WHERE user_id=%s", (formatted_channel, user_id))
+        with db.cursor() as cursor:
+            cursor.execute("UPDATE channels SET channel=%s WHERE user_id=%s", (formatted_channel, user_id))
 
     increment_metric("exchanges")
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
@@ -987,7 +955,7 @@ async def check_forced_subscribe(client: Client, message: Message):
 
     try:
         member = await client.get_chat_member(channel, message.from_user.id)
-        if member.status in ["creator", "administrator", "member"]:
+        if member.status in [ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.MEMBER]:
             return True
     except Exception:
         pass
@@ -995,26 +963,26 @@ async def check_forced_subscribe(client: Client, message: Message):
     clean_channel = channel.replace("@", "").replace("https://t.me/", "").replace("http://t.me/", "")
     keyboard = {
         "inline_keyboard": [
-            [{"text": "📢 اشتـرك بالقناه", "url": f"https://t.me/{clean_channel}"}],
-            [{"text": "🔄 تحقق من اشتراكك", "callback_data": "check_sub"}]
+            [{"text": "📢 اشتـرك بالقناه", "url": f"https://t.me/{clean_channel}", "style": "primary"}],
+            [{"text": "🔄 تحقق من اشتراكك", "callback_data": "check_sub", "style": "success"}]
         ]
     }
 
-    await message.reply_text(
-        f"⚠️ **عذراً عزيزي، يجب عليك الاشتراك في قناة البوت أولاً لاستخدام الخدمات:**\n\n@{clean_channel}\n\nاشترك ثم اضغط على زر التحقق أسفله 👇",
+    await send_colored_message(
+        chat_id=message.chat.id,
+        text=f"⚠️ **عذراً عزيزي، يجب عليك الاشتراك في قناة البوت أولاً لاستخدام الخدمات:**\n\n@{clean_channel}\n\nاشترك ثم اضغط على زر التحقق أسفله 👇",
         reply_markup=keyboard
     )
     return False
 
-
 @bot.on_callback_query(filters.regex("^check_sub$"))
-async def on_check_sub(client: Client, callback_query):
+async def on_check_sub(client: Client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     channel = get_setting("forced_sub_channel", "@KKEK2")
 
     try:
         member = await client.get_chat_member(channel, user_id)
-        if member.status in ["creator", "administrator", "member"]:
+        if member.status in [ChatMemberStatus.OWNER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.MEMBER]:
             await callback_query.answer("✅ شكراً لك! تم التأكد من اشتراكك، يمكنك الآن استخدام البوت.", show_alert=True)
             await callback_query.message.delete()
             return
@@ -1022,7 +990,6 @@ async def on_check_sub(client: Client, callback_query):
         pass
 
     await callback_query.answer("❌ أنت غير مشترك في القناة بعد! يرجى الاشتراك أولاً.", show_alert=True)
-
 
 @bot.on_message(filters.command("setchannel") & filters.private)
 async def set_forced_channel(client: Client, message: Message):
@@ -1037,7 +1004,6 @@ async def set_forced_channel(client: Client, message: Message):
     set_setting("forced_sub_channel", new_channel)
     await message.reply_text(f"✅ **تم تحديث قناة الاشتراك الإجباري بنجاح إلى:** {new_channel}")
 
-
 @bot.on_message(filters.command("togglesub") & filters.private)
 async def toggle_forced_sub(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
@@ -1049,7 +1015,6 @@ async def toggle_forced_sub(client: Client, message: Message):
 
     status_text = "🟢 مفعّل" if new_status == "true" else "🔴 معطل"
     await message.reply_text(f"⚙️ **تم تغيير حالة الاشتراك الإجباري إلى:** {status_text}")
-
 
 @bot.on_message(filters.private)
 async def main_message_router(client: Client, message: Message):
@@ -1064,7 +1029,7 @@ async def main_message_router(client: Client, message: Message):
     if user_id == ADMIN_ID and user_id not in ADMIN_STATES:
         return
 
-    await add_random_reaction(message.chat.id, message.id)
+    await add_random_reaction(message)
 
     if user_id == ADMIN_ID and user_id in ADMIN_STATES:
         state = ADMIN_STATES[user_id]
@@ -1074,7 +1039,7 @@ async def main_message_router(client: Client, message: Message):
             all_u = get_all_users()
             sent, failed = 0, 0
             await simulate_human_action(message.chat.id)
-            msg = await send_colored_message(message.chat.id, f"⏳ جارٍ الإذاعة لـ {len(all_u)} مستخدم...")
+            await send_colored_message(message.chat.id, f"⏳ جارٍ الإذاعة لـ {len(all_u)} مستخدم...")
 
             for u in all_u:
                 try:
@@ -1109,28 +1074,25 @@ async def main_message_router(client: Client, message: Message):
         try:
             await message.forward(ADMIN_ID)
             await simulate_human_action(message.chat.id)
-            await send_colored_message(message.chat.id, "📨*سبحان الله وبحمده، سبحان الله العظيم*.")
+            await send_random_zikr(client, message.chat.id, user_id)
         except Exception as e:
             logger.error(f"Forward Error: {e}")
 
-
-
 # ================= 15. AUTO CLEANUP TASK =================
 async def auto_cleanup_task():
-    """حذف البيانات والسجلات القديمة تلقائياً كل 24 ساعة"""
     while True:
         await asyncio.sleep(86400)
         try:
             check_db_health()
-            cursor.execute("DELETE FROM system_logs WHERE created_at < NOW() - INTERVAL '7 days';")
-            cursor.execute("DELETE FROM spam WHERE last_message < %s;", (int(time.time()) - 86400,))
+            with db.cursor() as cursor:
+                cursor.execute("DELETE FROM system_logs WHERE created_at < NOW() - INTERVAL '7 days';")
+                cursor.execute("DELETE FROM spam WHERE last_message < %s;", (int(time.time()) - 86400,))
             log_event("AUTO_CLEANUP", "Old logs and spam data cleaned up successfully.")
         except Exception as e:
             logger.error(f"Auto cleanup error: {e}")
 
 # ================= 19. SYSTEM MONITORING TASK =================
 async def system_monitor_task():
-    """مراقبة النظام وإرسال تنبيه للمالك عند المشاكل"""
     while True:
         await asyncio.sleep(3600)
         try:
@@ -1142,7 +1104,7 @@ async def system_monitor_task():
 
 # ================= WEB SERVER =================
 async def health(request):
-    return web.Response(text="Bot is running smoothly with 21 new features.")
+    return web.Response(text="Bot is running smoothly with all core features.")
 
 async def start_web():
     app = web.Application()
@@ -1184,13 +1146,12 @@ async def main():
     await safe_start_client(userbot, "Userbot")
     await safe_start_client(bot, "Bot")
     
-    # 13, 15, 19. START BACKGROUND WORKERS
     asyncio.create_task(process_exchange_queue())
     asyncio.create_task(auto_cleanup_task())
     asyncio.create_task(system_monitor_task())
 
     log_event("SYSTEM_START", "All system modules, tasks, and clients loaded successfully.")
-    logger.info("🚀 All 21 Advanced Features & Core Services Online.")
+    logger.info("🚀 All Advanced Features & Core Services Online.")
     await idle()
 
 if __name__ == "__main__":
