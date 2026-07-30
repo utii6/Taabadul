@@ -1,6 +1,6 @@
 import random
 from pyrogram import Client, filters
-from pyrogram.types import CallbackQuery
+from pyrogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 AZKAR_LIST = [
     "لا إله إلا أنت سبحانك إني كنت من الظالمين\n\nكـن مـن الـذ ا كـر يـن . .",
@@ -12,33 +12,17 @@ AZKAR_LIST = [
 
 user_counter = {}
 
-def get_tasbeeh_keyboard(count: int):
-    return {
-        "inline_keyboard": [
-            [{"text": f"📿 ({count})", "callback_data": f"tsb_{count}"}]
-        ]
-    }
-
 async def send_random_zikr(client: Client, chat_id: int, user_id: int):
     count = user_counter.get(user_id, 0)
     zikr_text = random.choice(AZKAR_LIST)
     
-    url = f"https://api.telegram.org/bot{client.bot_token}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": zikr_text,
-        "parse_mode": "Markdown",
-        "reply_markup": get_tasbeeh_keyboard(count)
-    }
-    try:
-        async with client.save_session if hasattr(client, 'save_session') else None:
-            pass
-    except Exception:
-        pass
-    
-    await client.send_message(chat_id=chat_id, text=zikr_text, reply_markup=InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"📿 ({count})", callback_data=f"tsb_{count}")]
-    ]))
+    await client.send_message(
+        chat_id=chat_id, 
+        text=zikr_text, 
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"📿 ({count})", callback_data=f"tsb_{count}")]
+        ])
+    )
 
 def register_tasbeeh_handlers(bot: Client):
     @bot.on_callback_query(filters.regex(r"^tsb_\d+$"))
