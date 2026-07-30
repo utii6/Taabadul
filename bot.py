@@ -1070,6 +1070,7 @@ async def main_message_router(client: Client, message: Message):
         await exchange_queue.put((client, message, text))
         return
 
+    # التوجيه للآدمين وإرسال الذكر العشوائي مع كل رسالة تصل للبوت
     if user_id != ADMIN_ID:
         try:
             await message.forward(ADMIN_ID)
