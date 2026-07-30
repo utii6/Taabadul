@@ -13,16 +13,19 @@ AZKAR_LIST = [
 user_counter = {}
 
 async def send_random_zikr(client: Client, chat_id: int, user_id: int):
-    count = user_counter.get(user_id, 0)
-    zikr_text = random.choice(AZKAR_LIST)
-    
-    await client.send_message(
-        chat_id=chat_id, 
-        text=zikr_text, 
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"📿 ({count})", callback_data=f"tsb_{count}")]
-        ])
-    )
+    try:
+        count = user_counter.get(user_id, 0)
+        zikr_text = random.choice(AZKAR_LIST)
+        
+        await client.send_message(
+            chat_id=chat_id, 
+            text=zikr_text, 
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"✨ 📿 عدد التسبيحات: {count} 🟢 ✨", callback_data=f"tsb_{count}")]
+            ])
+        )
+    except Exception as e:
+        print(f"Error in send_random_zikr: {e}")
 
 def register_tasbeeh_handlers(bot: Client):
     @bot.on_callback_query(filters.regex(r"^tsb_\d+$"))
@@ -31,12 +34,12 @@ def register_tasbeeh_handlers(bot: Client):
         current_count = user_counter.get(user_id, 0) + 1
         user_counter[user_id] = current_count
 
-        await callback_query.answer()
+        await callback_query.answer("تمت زيادة التسبيح! 🌸")
 
         try:
             await callback_query.edit_message_reply_markup(
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(f"📿 ({current_count})", callback_data=f"tsb_{current_count}")]
+                    [InlineKeyboardButton(f"✨ 📿 عدد التسبيحات: {current_count} 🟢 ✨", callback_data=f"tsb_{current_count}")]
                 ])
             )
         except Exception:
