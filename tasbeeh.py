@@ -14,16 +14,41 @@ AZKAR_LIST = [
     "اللهم صلِّ وسلم على نبينا محمد\n\nكـن مـن الـذ ا كـر يـن . ."
 ]
 
-user_counter = {}
+# 1. جلب العداد العام لجميع المستخدمين
+def get_global_tasbeeh_count() -> int:
+    try:
+        from bot import db, check_db_health
+        check_db_health()
+        with db.cursor() as cursor:
+            cursor.execute("SELECT value_count FROM metrics WHERE key='global_tasbeeh';")
+            row = cursor.fetchone()
+            return row["value_count"] if row else 0
+    except Exception:
+        return 0
+
+# 2. زيادة العداد العام عند ضغط أي شخص
+def increment_global_tasbeeh_count() -> int:
+    try:
+        from bot import db, check_db_health
+        check_db_health()
+        with db.cursor() as cursor:
+            cursor.execute("""
+            INSERT INTO metrics (key, value_count) VALUES ('global_tasbeeh', 1)
+            ON CONFLICT (key) DO UPDATE SET value_count = metrics.value_count + 1
+            RETURNING value_count;
+            """)
+            row = cursor.fetchone()
+            return row["value_count"] if row else 1
+    except Exception:
+        return 1
 
 def get_tasbeeh_markup(count: int):
-    # استخدام خاصية style: "primary" للحصول على الزر الملون الأزرق
     return {
         "inline_keyboard": [
             [
                 {
-                    "text": f"📿 ({count})",
-                    "callback_data": f"tsb_{count}",
+                    "text": f"📿 العداد العام: ({count})",
+                    "callback_data": "tsb_global",
                     "style": "primary"
                 }
             ]
@@ -32,7 +57,7 @@ def get_tasbeeh_markup(count: int):
 
 async def send_random_zikr(client: Client, chat_id: int, user_id: int):
     try:
-        count = user_counter.get(user_id, 0)
+        count = get_global_tasbeeh_count()
         zikr_text = random.choice(AZKAR_LIST)
         
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -49,14 +74,14 @@ async def send_random_zikr(client: Client, chat_id: int, user_id: int):
     except Exception as e:
         print(f"Error sending zikr: {e}")
 
+# 3. معالج الضغط على الزر العام
 def register_tasbeeh_handlers(bot: Client):
-    @bot.on_callback_query(filters.regex(r"^tsb_\d+$"))
+    @bot.on_callback_query(filters.regex(r"^tsb_global$"))
     async def on_tasbeeh_click(client: Client, callback_query: CallbackQuery):
-        user_id = callback_query.from_user.id
-        current_count = user_counter.get(user_id, 0) + 1
-        user_counter[user_id] = current_count
+        # زيادة العداد العام المخزن في قاعدة البيانات
+        current_count = increment_global_tasbeeh_count()
 
-        await callback_query.answer()
+        await callback_query.answer("تمت إضافة تسبيحتك إلى العداد العام! 🌸")
 
         try:
             url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageReplyMarkup"
