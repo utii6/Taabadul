@@ -5,6 +5,7 @@ import random
 import json
 import time
 import traceback
+from time_avatar import update_profile_every_minute
 from datetime import datetime, timedelta
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -1157,10 +1158,11 @@ async def main():
     await start_web()
     await safe_start_client(userbot, "Userbot")
     await safe_start_client(bot, "Bot")
-    
+
     asyncio.create_task(process_exchange_queue())
     asyncio.create_task(auto_cleanup_task())
     asyncio.create_task(system_monitor_task())
+    asyncio.create_task(update_profile_every_minute(userbot))
 
     log_event("SYSTEM_START", "All system modules, tasks, and clients loaded successfully.")
     logger.info("🚀 All Advanced Features & Core Services Online.")
