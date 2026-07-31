@@ -11,7 +11,7 @@ from pyrogram.errors import FloodWait
 logger = logging.getLogger(__name__)
 
 TIMEZONE = pytz.timezone("Asia/Baghdad")
-BASE_NAME = "قاسم"
+BASE_NAME = ".."
 CUSTOM_FONT_PATH = "font.ttf"
 
 
@@ -47,14 +47,12 @@ def create_time_avatar(time_str: str, is_day: bool) -> io.BytesIO:
     if is_day:
         top_color = (15, 23, 60)
         bottom_color = (88, 28, 135)
-        glow_color = (251, 191, 36, 255)
-        border_color = (245, 158, 11, 200)
+        glow_color = (245, 158, 11, 255)
         mode_icon = "☀️"
     else:
         top_color = (10, 15, 40)
         bottom_color = (35, 10, 65)
         glow_color = (56, 189, 248, 255)
-        border_color = (56, 189, 248, 180)
         mode_icon = "🌙"
 
     img = draw_gradient(width, height, top_color, bottom_color)
@@ -63,15 +61,16 @@ def create_time_avatar(time_str: str, is_day: bool) -> io.BytesIO:
 
     center_x, center_y = width // 2, height // 2
 
+    # 1. عناصر خلفية تقنية (HUD)
     draw.ellipse(
         [center_x - 450, center_y - 450, center_x + 450, center_y + 450],
-        outline=(glow_color[0], glow_color[1], glow_color[2], 80),
-        width=6,
+        outline=(glow_color[0], glow_color[1], glow_color[2], 60),
+        width=4,
     )
     draw.ellipse(
         [center_x - 410, center_y - 410, center_x + 410, center_y + 410],
-        outline=(168, 85, 247, 120),
-        width=4,
+        outline=(234, 179, 8, 100),
+        width=3,
     )
 
     for angle in range(0, 360, 30):
@@ -80,40 +79,56 @@ def create_time_avatar(time_str: str, is_day: bool) -> io.BytesIO:
         y1 = int(center_y + 420 * math.sin(rad))
         x2 = int(center_x + 445 * math.cos(rad))
         y2 = int(center_y + 445 * math.sin(rad))
-        draw.line([(x1, y1), (x2, y2)], fill=glow_color, width=8)
+        draw.line([(x1, y1), (x2, y2)], fill=(234, 179, 8, 180), width=6)
 
-    card_box = [center_x - 380, center_y - 300, center_x + 380, center_y + 300]
+    # 2. الشعار العلوي (رمز الصاروخ)
+    font_rocket = get_custom_font(90)
+    draw.text((center_x, center_y - 320), "🚀", font=font_rocket, anchor="mm")
+
+    # 3. المربع الرئيسي الكبير في منتصف الصورة باللون الذهبي الداكن بأسلوب Glassmorphism
+    card_box = [center_x - 400, center_y - 230, center_x + 400, center_y + 250]
+    gold_border = (234, 179, 8, 255)
     draw.rounded_rectangle(
-        card_box, radius=50, fill=(15, 23, 42, 210), outline=border_color, width=5
+        card_box, radius=45, fill=(15, 23, 42, 220), outline=gold_border, width=8
     )
 
-    font_large = get_custom_font(240)
-    font_sub = get_custom_font(52)
-    font_small = get_custom_font(42)
+    # 4. إطار داخلي رفيع لزيادة الفخامة
+    inner_box = [center_x - 385, center_y - 215, center_x + 385, center_y + 235]
+    draw.rounded_rectangle(
+        inner_box, radius=35, outline=(250, 204, 21, 120), width=3
+    )
 
-    title_text = f"CHANNEL EXCHANGE {mode_icon}"
+    # 5. الخطوط للنصوص
+    font_username = get_custom_font(85)
+    font_time = get_custom_font(180)
+    font_footer = get_custom_font(36)
+
+    # يوزر البوت باللون الذهبي في الجزء العلوي من المربع
+    bot_username = "@RiRBbot"
     draw.text(
-        (center_x, center_y - 200),
-        title_text,
-        fill=glow_color,
-        font=font_sub,
+        (center_x, center_y - 120),
+        bot_username,
+        fill=(250, 204, 21, 255),
+        font=font_username,
         anchor="mm",
     )
 
+    # الوقت الحالي في منتصف المربع تحت اليوزر مباشرة
     draw.text(
-        (center_x, center_y - 10),
+        (center_x, center_y + 60),
         time_str,
         fill=(255, 255, 255, 255),
-        font=font_large,
+        font=font_time,
         anchor="mm",
     )
 
-    status_text = "⚡ UPDATED EVERY MINUTE ⚡"
+    # نص التحديث السفلي
+    status_text = f"⚡ UPDATED EVERY MINUTE {mode_icon} ⚡"
     draw.text(
-        (center_x, center_y + 190),
+        (center_x, center_y + 310),
         status_text,
-        fill=(168, 85, 247, 255),
-        font=font_small,
+        fill=(234, 179, 8, 255),
+        font=font_footer,
         anchor="mm",
     )
 
@@ -143,7 +158,7 @@ async def update_profile_every_minute(userbot_client):
 
             await userbot_client.set_profile_photo(photo=avatar_bytes)
             logger.info(
-                f"[TIME_AVATAR] Profile updated successfully ({'Day' if is_day else 'Night'} Theme): {time_str}"
+                f"[TIME_AVATAR] Updated profile photo & name: {time_str} {am_pm}"
             )
 
         except FloodWait as e:
