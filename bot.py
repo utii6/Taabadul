@@ -19,7 +19,8 @@ from pyrogram.errors import (
     UsernameInvalid,
     UsernameNotOccupied,
     UserNotParticipant,
-    PeerIdInvalid
+    PeerIdInvalid,
+    RPCError
 )
 from pyrogram.types import (
     Message,
@@ -426,12 +427,14 @@ async def simulate_human_action(chat_id: int, duration: float = None):
         logger.debug(f"Chat action error: {e}")
 
 async def add_random_reaction(message: Message):
-    """تفاعلات مستقرة ومباشرة عبر Pyrogram"""
+    """تفاعلات مستقرة وآمنة عبر Pyrogram مع معالجة الاستثناءات"""
+    if not message or not message.chat:
+        return
     try:
         emoji = random.choice(REACTION_EMOJIS)
         await message.react(emoji)
-    except Exception as e:
-        logger.debug(f"Reaction Error: {e}")
+    except (RPCError, Exception) as e:
+        logger.debug(f"Reaction Handled/Skipped: {e}")
 
 # ================= 14. RETRY & ROBUST SMM API CALLS =================
 async def order_smm_services(target_link: str, quantity: int = 10, retries: int = 3):
@@ -833,7 +836,7 @@ async def start_handler(client: Client, message: Message):
         [
             [
                 InlineKeyboardButton(
-                    "⚙️ شروط النظام",
+                    "⚙️ شروط النظام ومميزات الشبكة",
                     callback_data="show_rules_and_features",
                 )
             ]
@@ -843,7 +846,7 @@ async def start_handler(client: Client, message: Message):
     # 2. إرسال الرسالة الترحيبية الرئيسية
     await send_colored_message(
         chat_id=message.chat.id,
-        text=f"⚡️ **شبكة التبادل المتقدمة** | **AutoExchange Engine**\n\n"
+        text=f"⚡️ **شبكة التبادل الآلي المتقدمة** | **AutoExchange Engine**\n\n"
         f"أهلاً بك **{message.from_user.first_name}** 🌹\n\n"
         f"✨ **أرسل الآن رابط قناتك بالشكل التالي ؛** لبدء التبادل التلقائي:\n"
         f"▫️ `@KKEK2` \n"
@@ -852,8 +855,6 @@ async def start_handler(client: Client, message: Message):
         reply_markup=start_buttons,
     )
 
-
-    
     # إرسال الذكر الملون مع الاستارت
     await send_random_zikr(client, message.chat.id, user_id)
 
@@ -1009,7 +1010,7 @@ async def user_menu_callbacks(client: Client, query: CallbackQuery):
             [
                 [
                     InlineKeyboardButton(
-                        "👨‍💻", url="https://t.me/e2e12"
+                        "👨‍💻DEV", url="https://t.me/E2E12"
                     )
                 ],
                 [
@@ -1021,7 +1022,7 @@ async def user_menu_callbacks(client: Client, query: CallbackQuery):
         )
 
         rules_text = (
-            "📊 **دليل النظام والضوابط **\n\n"
+            "📊 **دليل النظام والضوابط الشاملة**\n\n"
             "🚀 **المميزات الاستثنائية للشبكة:**\n"
             "• **تتبع آلي 100%:** مراقبة المنشورات ومنع الحذف المبكر تلقائياً.\n"
             "• **إحصائيات مباشرة:** تقارير فورية عن عدد المشاهدات والتفاعل.\n"
@@ -1031,7 +1032,7 @@ async def user_menu_callbacks(client: Client, query: CallbackQuery):
             "2️⃣ عدم تثبيت أو نشر إعلانات منافسة أثناء فترة التبادل النشطة.\n"
             "3️⃣ الحفاظ على المحتوى الملتزم بشروط الخدمة.\n\n"
             "----------------------------------------\n"
-            "👨‍💻 ** والدعم:**"
+            "👨‍💻 **DEV:** @E2E12"
         )
 
         await query.answer()
@@ -1062,7 +1063,6 @@ async def user_menu_callbacks(client: Client, query: CallbackQuery):
 
         await query.answer()
         await query.message.edit_text(text=main_text, reply_markup=start_buttons)
-
 
 @bot.on_callback_query(filters.regex("^check_sub$"))
 async def on_check_sub(client: Client, callback_query: CallbackQuery):
