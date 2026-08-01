@@ -47,7 +47,7 @@ def create_time_avatar(time_str: str, is_day: bool) -> io.BytesIO:
     font_time = get_custom_font(120)
     font_footer = get_custom_font(32)
 
-    bot_username = "@ERR3bot"
+    bot_username = "@RiRBbot"
 
     draw.text(
         (center_x, center_y - 110),
