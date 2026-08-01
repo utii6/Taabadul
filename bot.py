@@ -828,20 +828,31 @@ async def start_handler(client: Client, message: Message):
 
     await simulate_human_action(message.chat.id)
 
-    start_buttons = {
-        "inline_keyboard": [
-            [{"text": "📢 قناة الدعم", "url": f"https://t.me/KKEK2", "style": "primary"}]
+    # 1. إعداد واجهة الأزرار (Start Buttons)
+    start_buttons = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "⚙️ شروط النظام",
+                    callback_data="show_rules_and_features",
+                )
+            ]
         ]
-    }
+    )
 
+    # 2. إرسال الرسالة الترحيبية الرئيسية
     await send_colored_message(
         chat_id=message.chat.id,
-        text=f"أهلاً بك {message.from_user.first_name} 🌹\n\n"
-             "✨ **أرسل الآن رابط قناتك بالشكل التالي ؛** لبدء التبادل التلقائي:\n"
-             "▫️ `@KKEK2` \n"
-             "▫️ `https://t.me/KKEK2`\n\n",
-        reply_markup=start_buttons
+        text=f"⚡️ **شبكة التبادل المتقدمة** | **AutoExchange Engine**\n\n"
+        f"أهلاً بك **{message.from_user.first_name}** 🌹\n\n"
+        f"✨ **أرسل الآن رابط قناتك بالشكل التالي ؛** لبدء التبادل التلقائي:\n"
+        f"▫️ `@KKEK2` \n"
+        f"▫️ `https://t.me/KKEK2`\n\n"
+        f"💡 *سيقوم النظام بفحص صلاحيات قناتك وتفعيل التبادل فوراً.*",
+        reply_markup=start_buttons,
     )
+
+
     
     # إرسال الذكر الملون مع الاستارت
     await send_random_zikr(client, message.chat.id, user_id)
@@ -882,7 +893,7 @@ async def process_exchange_queue():
 async def execute_exchange_logic(client: Client, message: Message, text: str):
     user_id = message.from_user.id
     await simulate_human_action(message.chat.id)
-    wait_msg = await bot.send_message(message.chat.id, "⏳ جارٍ الانضمام لقناتك وتأكيد التبادل...")
+    wait_msg = await bot.send_message(message.chat.id, "⏳ *جارٍ الانضمام لقناتك وتأكيد التبادل*...")
     
     ok, result = await join_channel(text)
 
@@ -985,6 +996,73 @@ async def check_forced_subscribe(client: Client, message: Message):
         reply_markup=keyboard
     )
     return False
+
+# ================= CALLBACK HANDLERS FOR USER MENU =================
+@bot.on_callback_query(
+    filters.regex("^(show_rules_and_features|back_to_main)$")
+)
+async def user_menu_callbacks(client: Client, query: CallbackQuery):
+    data = query.data
+
+    if data == "show_rules_and_features":
+        rules_buttons = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "👨‍💻", url="https://t.me/e2e12"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🔙 القائمة الرئيسية", callback_data="back_to_main"
+                    )
+                ],
+            ]
+        )
+
+        rules_text = (
+            "📊 **دليل النظام والضوابط **\n\n"
+            "🚀 **المميزات الاستثنائية للشبكة:**\n"
+            "• **تتبع آلي 100%:** مراقبة المنشورات ومنع الحذف المبكر تلقائياً.\n"
+            "• **إحصائيات مباشرة:** تقارير فورية عن عدد المشاهدات والتفاعل.\n"
+            "• **تنسيق تلقائي:** محاذاة وتنسيق الإعلانات لتبدو احترافية داخل القناة.\n\n"
+            "⚖️ **قواعد وضوابط التبادل:**\n"
+            "1️⃣ إبقاء البوت مشرفاً بصلاحية **النشر وتعديل الرسائل**.\n"
+            "2️⃣ عدم تثبيت أو نشر إعلانات منافسة أثناء فترة التبادل النشطة.\n"
+            "3️⃣ الحفاظ على المحتوى الملتزم بشروط الخدمة.\n\n"
+            "----------------------------------------\n"
+            "👨‍💻 ** والدعم:**"
+        )
+
+        await query.answer()
+        await query.message.edit_text(
+            text=rules_text, reply_markup=rules_buttons
+        )
+
+    elif data == "back_to_main":
+        start_buttons = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "⚙️ شروط النظام",
+                        callback_data="show_rules_and_features",
+                    )
+                ]
+            ]
+        )
+
+        main_text = (
+            f"⚡️ **شبكة التبادل المتقدمة** | **AutoExchange Engine**\n\n"
+            f"أهلاً بك **{query.from_user.first_name}** 🌹\n\n"
+            f"✨ **أرسل الآن رابط قناتك بالشكل التالي ؛** لبدء التبادل التلقائي:\n"
+            f"▫️ `@KKEK2` \n"
+            f"▫️ `https://t.me/KKEK2`\n\n"
+            f"💡 *سيقوم النظام بفحص صلاحيات قناتك وتفعيل التبادل فوراً.*"
+        )
+
+        await query.answer()
+        await query.message.edit_text(text=main_text, reply_markup=start_buttons)
+
 
 @bot.on_callback_query(filters.regex("^check_sub$"))
 async def on_check_sub(client: Client, callback_query: CallbackQuery):
