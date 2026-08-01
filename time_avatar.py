@@ -1,7 +1,6 @@
 import asyncio
 import io
 import logging
-import math
 import os
 from datetime import datetime
 import pytz
@@ -47,7 +46,7 @@ def create_time_avatar(time_str: str, is_day: bool) -> io.BytesIO:
     font_time = get_custom_font(120)
     font_footer = get_custom_font(32)
 
-    bot_username = "@RiRBbot"
+    bot_username = "@ERR3bot"
 
     draw.text(
         (center_x, center_y - 110),
@@ -114,7 +113,5 @@ async def update_profile_every_minute(userbot_client):
         except Exception as e:
             logger.error(f"[TIME_AVATAR] Error: {e}")
 
-        # الانتظار حتى بداية الدقيقة التالية تماماً
-now_sec = datetime.now().second
-await asyncio.sleep(60 - now_sec)
-
+        now_sec = datetime.now(TIMEZONE).second
+        await asyncio.sleep(60 - now_sec)
