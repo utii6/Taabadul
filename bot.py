@@ -832,16 +832,17 @@ async def start_handler(client: Client, message: Message):
     await simulate_human_action(message.chat.id)
 
     # 1. إعداد واجهة الأزرار (Start Buttons)
-    start_buttons = InlineKeyboardMarkup(
-        [
+    start_buttons = {
+        "inline_keyboard": [
             [
-                InlineKeyboardButton(
-                    "⚙️ شروط النظام ومميزات الشبكة",
-                    callback_data="show_rules_and_features",
-                )
+                {
+                    "text": "⚙️Bio",
+                    "callback_data": "show_rules_and_features"
+                }
             ]
         ]
-    )
+    }
+
 
     # 2. إرسال الرسالة الترحيبية الرئيسية
     await send_colored_message(
