@@ -84,7 +84,7 @@ def create_time_avatar(time_str: str, is_day: bool) -> io.BytesIO:
 
 
 async def update_profile_every_minute(userbot_client):
-    photo_counter = 0
+    photo_counter = 1
     while True:
         try:
             now = datetime.now(TIMEZONE)
@@ -114,4 +114,7 @@ async def update_profile_every_minute(userbot_client):
         except Exception as e:
             logger.error(f"[TIME_AVATAR] Error: {e}")
 
-        await asyncio.sleep(60)
+        # الانتظار حتى بداية الدقيقة التالية تماماً
+now_sec = datetime.now().second
+await asyncio.sleep(60 - now_sec)
+
