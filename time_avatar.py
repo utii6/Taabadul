@@ -16,6 +16,7 @@ TEMPLATE_IMAGE_PATH = "template.jpg"
 
 
 def get_custom_font(size: int):
+    """جلب الخط المخصص أو الافتراضي مع الحجم المحدد"""
     if os.path.exists(CUSTOM_FONT_PATH):
         try:
             return ImageFont.truetype(CUSTOM_FONT_PATH, size)
@@ -28,6 +29,7 @@ def get_custom_font(size: int):
 
 
 def create_time_avatar(time_str: str, is_day: bool) -> io.BytesIO:
+    """إنشاء صورة الملف الشخصي مع تكبير حجم النص والوقت ليكون واضحاً"""
     if os.path.exists(TEMPLATE_IMAGE_PATH):
         img = Image.open(TEMPLATE_IMAGE_PATH).convert("RGBA")
     else:
@@ -42,31 +44,40 @@ def create_time_avatar(time_str: str, is_day: bool) -> io.BytesIO:
 
     mode_icon = "☀️" if is_day else "🌙"
 
-    font_username = get_custom_font(75)
-    font_time = get_custom_font(120)
-    font_footer = get_custom_font(32)
+    # --- تم زيادة أحجام الخطوط هنا للوضوح ---
+    font_username = get_custom_font(100)  # تم التكبير من 75 إلى 95
+    font_time = get_custom_font(190)      # تم التكبير من 120 إلى 170
+    font_footer = get_custom_font(52)    # تم التكبير من 32 إلى 42
 
-    bot_username = "@ERR3bot"
+    bot_username = "@RiRBbot"
 
+    # كتابة اليوزر في الأعلى
+# 1. التعديل هنا: ضع يوزرك الجديد مكان القديم
+bot_username = "@RiRBbot"
+
+# 2. هذا هو السطر الذي أرفقته أنت للرسم:
+draw.text(
+    (center_x, center_y - 140),
+    bot_username,
+    fill=(250, 204, 21, 255),
+    font=font_username,
+    anchor="mm",
+)
+
+
+    # كتابة الوقت في المنتصف بخط كبير وواضح
     draw.text(
-        (center_x, center_y - 110),
-        bot_username,
-        fill=(250, 204, 21, 255),
-        font=font_username,
-        anchor="mm",
-    )
-
-    draw.text(
-        (center_x, center_y + 40),
+        (center_x, center_y + 30),
         time_str,
         fill=(255, 255, 255, 255),
         font=font_time,
         anchor="mm",
     )
 
+    # كتابة النص السفلي
     status_text = f"UPDATED EVERY MINUTE {mode_icon}"
     draw.text(
-        (center_x, center_y + 190),
+        (center_x, center_y + 210),
         status_text,
         fill=(234, 179, 8, 255),
         font=font_footer,
@@ -83,35 +94,45 @@ def create_time_avatar(time_str: str, is_day: bool) -> io.BytesIO:
 
 
 async def update_profile_every_minute(userbot_client):
+    """دالة التحديث الدورية المستمرة بدون أخطاء أو تعليق"""
     photo_counter = 1
+    last_updated_min = -1  # لمنع التكرار في نفس الدقيقة
+
     while True:
         try:
             now = datetime.now(TIMEZONE)
-            time_str = now.strftime("%I:%M")
-            am_pm = "AM" if now.strftime("%p") == "AM" else "PM"
 
-            is_day = 6 <= now.hour < 18
-            time_icon = "☀️" if is_day else "🌙"
+            # التحديث فقط عند بداية دقيقة جديدة
+            if now.minute != last_updated_min:
+                time_str = now.strftime("%I:%M")
+                am_pm = now.strftime("%p")
 
-            new_name = f"{BASE_NAME} {time_icon} {time_str} {am_pm}"
-            await userbot_client.update_profile(first_name=new_name)
+                is_day = 6 <= now.hour < 18
+                time_icon = "☀️" if is_day else "🌙"
 
-            if photo_counter % 5 == 0:
-                avatar_bytes = create_time_avatar(time_str, is_day)
-                await userbot_client.set_profile_photo(photo=avatar_bytes)
-                logger.info(
-                    f"[TIME_AVATAR] Updated profile photo & name: {time_str} {am_pm}"
-                )
+                new_name = f"{BASE_NAME} {time_icon} {time_str} {am_pm} 🎣🐟"
 
-            photo_counter += 1
+                # 1. تحديث الاسم الأول بالحساب
+                await userbot_client.update_profile(first_name=new_name)
+                last_updated_min = now.minute
+                logger.info(f"[TIME_PROFILE] Updated name: {time_str} {am_pm}")
+
+                # 2. تحديث صورة الحساب كل 5 دقائق مع معالجة الاستثناءات منفصلة
+                if photo_counter % 5 == 0:
+                    try:
+                        avatar_bytes = create_time_avatar(time_str, is_day)
+                        await userbot_client.set_profile_photo(photo=avatar_bytes)
+                        logger.info("[TIME_PROFILE] Updated profile photo successfully.")
+                    except Exception as photo_err:
+                        logger.error(f"[TIME_PROFILE] Photo Update Failed: {photo_err}")
+
+                photo_counter += 1
 
         except FloodWait as e:
-            logger.warning(
-                f"[TIME_AVATAR] FloodWait received: waiting {e.value} seconds."
-            )
+            logger.warning(f"[TIME_PROFILE] FloodWait received: waiting {e.value} seconds.")
             await asyncio.sleep(e.value)
         except Exception as e:
-            logger.error(f"[TIME_AVATAR] Error: {e}")
+            logger.error(f"[TIME_PROFILE] General Error: {e}")
 
-        now_sec = datetime.now(TIMEZONE).second
-        await asyncio.sleep(60 - now_sec)
+        # فحص مرن كل 5 ثوانٍ للوصول للثانية الأولى من كل دقيقة فوراً
+        await asyncio.sleep(5)
