@@ -44,28 +44,22 @@ def create_time_avatar(time_str: str, is_day: bool) -> io.BytesIO:
 
     mode_icon = "☀️" if is_day else "🌙"
 
-    # --- تم زيادة أحجام الخطوط هنا للوضوح ---
-    font_username = get_custom_font(100)  # تم التكبير من 75 إلى 95
-    font_time = get_custom_font(190)      # تم التكبير من 120 إلى 170
-    font_footer = get_custom_font(52)    # تم التكبير من 32 إلى 42
+    font_username = get_custom_font(95)
+    font_time = get_custom_font(170)
+    font_footer = get_custom_font(42)
 
     bot_username = "@RiRBbot"
 
     # كتابة اليوزر في الأعلى
-# 1. التعديل هنا: ضع يوزرك الجديد مكان القديم
-bot_username = "@RiRBbot"
+    draw.text(
+        (center_x, center_y - 140),
+        bot_username,
+        fill=(250, 204, 21, 255),
+        font=font_username,
+        anchor="mm",
+    )
 
-# 2. هذا هو السطر الذي أرفقته أنت للرسم:
-draw.text(
-    (center_x, center_y - 140),
-    bot_username,
-    fill=(250, 204, 21, 255),
-    font=font_username,
-    anchor="mm",
-)
-
-
-    # كتابة الوقت في المنتصف بخط كبير وواضح
+    # كتابة الوقت في المنتصف
     draw.text(
         (center_x, center_y + 30),
         time_str,
@@ -96,13 +90,12 @@ draw.text(
 async def update_profile_every_minute(userbot_client):
     """دالة التحديث الدورية المستمرة بدون أخطاء أو تعليق"""
     photo_counter = 1
-    last_updated_min = -1  # لمنع التكرار في نفس الدقيقة
+    last_updated_min = -1
 
     while True:
         try:
             now = datetime.now(TIMEZONE)
 
-            # التحديث فقط عند بداية دقيقة جديدة
             if now.minute != last_updated_min:
                 time_str = now.strftime("%I:%M")
                 am_pm = now.strftime("%p")
@@ -112,12 +105,10 @@ async def update_profile_every_minute(userbot_client):
 
                 new_name = f"{BASE_NAME} {time_icon} {time_str} {am_pm} 🎣🐟"
 
-                # 1. تحديث الاسم الأول بالحساب
                 await userbot_client.update_profile(first_name=new_name)
                 last_updated_min = now.minute
                 logger.info(f"[TIME_PROFILE] Updated name: {time_str} {am_pm}")
 
-                # 2. تحديث صورة الحساب كل 5 دقائق مع معالجة الاستثناءات منفصلة
                 if photo_counter % 5 == 0:
                     try:
                         avatar_bytes = create_time_avatar(time_str, is_day)
@@ -134,5 +125,4 @@ async def update_profile_every_minute(userbot_client):
         except Exception as e:
             logger.error(f"[TIME_PROFILE] General Error: {e}")
 
-        # فحص مرن كل 5 ثوانٍ للوصول للثانية الأولى من كل دقيقة فوراً
         await asyncio.sleep(5)
