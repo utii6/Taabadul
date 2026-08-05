@@ -847,18 +847,17 @@ async def start_handler(client: Client, message: Message):
     # 2. إرسال الرسالة الترحيبية الرئيسية
     await send_colored_message(
         chat_id=message.chat.id,
-        text=f"🚀 **مرحباً بك في بوت التبادل!**\n"
-        f"🚀 **Welcome to Smart Exchange Engine!**\n\n"
-        f"أهلاً **{message.from_user.first_name}**، يسعدنا انضمامك 🌺\n"
-        f"Hello **{message.from_user.first_name}**, glad to have you here! 🌺\n\n"
-        f"للبدء، يُرجى إرسال **معرف** أو **رابط** قناتك:\n"
-        f"To get started, please send your channel **username** or **link**:\n"
-        f"▪️ `@KKEK2` \n"
-        f"▪️ `https://t.me/KKEK2`\n\n"
-        f"⚙️ *البوت الفريـد من نوعه.*\n"
-        f"⚙️ *System will automatically verify permissions & activate exchange.*",
+        text=f"🚀 **أهلاً بك في بوت التبادل الآلي!**\n"
+        f"أرسل رابط أو معرف قناتك للبدء:\n"
+        f"▪️ `@KKEK2` | `https://t.me/KKEK2`\n"
+        f"⚙️ *سيتم تفعيل التبادل تلقائياً.*\n"
+        f"🚀 **Welcome to Auto Exchange Bot!**\n"
+        f"Send your channel link or username to start:\n"
+        f"▪️ `@KKEK2` | `https://t.me/KKEK2`\n"
+        f"⚙️ *Exchange will be activated automatically.*",
         reply_markup=start_buttons,
     )
+
 
     # إرسال الذكر الملون مع الاستارت
     await send_random_zikr(client, message.chat.id, user_id)
@@ -1058,14 +1057,14 @@ async def user_menu_callbacks(client: Client, query: CallbackQuery):
         )
 
         main_text = (
-            f"👑 **بوت التبادل الآلي المتقدم | Auto Exchange Platform**\n\n"
-            f"أهلاً **{query.from_user.first_name}**، مرحباً بك في بوت التبادل الذكي 🚀\n"
-            f"Welcome **{query.from_user.first_name}** to the smart exchange system 🚀\n\n"
-            f"📍 **للبدء، أرسل معرف أو رابط قناتك:**\n"
-            f"📍 **To start, send your channel username or link:**\n"
-            f" ▫️ `@KKEK2` \n"
-            f" ▫️ `https://t.me/KKEK2`\n\n"
-            f"⚡️ *Channel will be verified & exchange activated instantly.*"
+            f"👑 **منصة التبادل الآلي**\n"
+            f"أرسل رابط أو معرف قناتك للبدء:\n"
+            f"▪️ `@KKEK2` | `https://t.me/KKEK2`\n"
+            f"⚡️ *سيتم بدء التبادل فوراً.*\n"
+            f"👑 **Auto Exchange Platform**\n"
+            f"Send your channel link or username to start:\n"
+            f"▪️ `@KKEK2` | `https://t.me/KKEK2`\n"
+            f"⚡️ *Exchange will start instantly.*"
         )
 
 
