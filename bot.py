@@ -5,7 +5,6 @@ import random
 import json
 import time
 import traceback
-from time_avatar import update_profile_every_minute
 from datetime import datetime, timedelta
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -30,8 +29,9 @@ from pyrogram.types import (
 )
 
 from tasbeeh import send_random_zikr, register_tasbeeh_handlers
+from time_avatar import update_profile_every_minute
 
-# ================= 1 & 21. LOGGING & CODE ORGANIZATION SETUP =================
+# ================= LOGGING SETUP =================
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | [%(levelname)s] | %(message)s"
@@ -61,41 +61,106 @@ HUMAN_ACTIONS = [
 ]
 
 ADMIN_STATES = {}
-
-# 13. QUEUE SYSTEM FOR REQUESTS (Safe Boundary Limit)
 exchange_queue = asyncio.Queue(maxsize=1000)
 
-# ================= PYROGRAM CLIENTS =================
-bot = Client(
-    "Bot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    in_memory=True
-)
+# ================= TRANSLATION DICTIONARIES =================
+LANG_AR = {
+    "start_text": (
+        "🚀 **أهلاً بك في بوت التبادل الآلي!**\n"
+        "أرسل رابط أو معرف قناتك للبدء:\n"
+        "▪️ `@KKEK2` | `https://t.me/KKEK2`\n"
+        "⚙️ *سيتم تفعيل التبادل تلقائياً.*"
+    ),
+    "bio_btn": "⚙️ Bio",
+    "lang_btn": "🌐 Language",
+    "choose_lang": "🌐 **الرجاء اختيار لغتك المفضلة / Please select your language:**",
+    "lang_changed": "✅ تم تغيير اللغة إلى العربية بنجاح!",
+    "rules_text": (
+        "💎 ═══ [ **دليل النظام والضوابط الشاملة** ] ═══ 💎\n\n"
+        "🚀 **المميزات الاستثنائية للشبكة:**\n"
+        " ├ 🤖 **تتبع آلي 100%:** مراقبة المنشورات ومنع الحذف المبكر.\n"
+        " ├ 📊 **إحصائيات مباشرة:** تقارير فورية عن المشاهدات والتفاعل.\n"
+        " └ 🎨 **تنسيق تلقائي:** محاذاة الإعلانات لتبدو احترافية.\n\n"
+        "⚖️ **قواعد وشروط التبادل:**\n"
+        " 𝟣️⃣ رفع البوت مشرفاً بصلاحية **النشر وتعديل الرسائل**.\n"
+        " 𝟤️⃣ عدم حذف الإعلان أو نشر إعلانات منافسة أثناء فترة التبادل.\n"
+        " 𝟥️⃣ الالتزام الكامل بشروط الخدمة والمحتوى المسموح.\n\n"
+        "🌐 ═══ ═══ ═══ ═══ ═══ 🌐\n"
+        "👨‍💻 **للمساعدة:** @E2E12"
+    ),
+    "dev_btn": "👨‍💻| DEV",
+    "back_btn": "🔙 للقائمة الرئيسية",
+    "exchange_success": (
+        "🎉 **تم التبادل المباشر بنجاح!**\n\n"
+        "📌 **القناة:** {title}\n"
+        "⏰ **الوقت:** `{now_str}`\n"
+        "✅ انضم الحساب المساعد إلى قناتك فوراً وسيتم بدء دعم الأعضاء لقناتك.\n\n"
+        "👇 يمكنك معاينة التفاصيل أدناه:"
+    ),
+    "userbot_btn": "👤 (Userbot)",
+    "your_channel_btn": "📢 قناتك الجميلة",
+    "exchange_disabled": "⚠️ نظام التبادل متوقف حالياً للصيانة."
+}
 
+LANG_EN = {
+    "start_text": (
+        "🚀 **Welcome to Auto Exchange Bot!**\n"
+        "Send your channel link or username to start:\n"
+        "▪️ `@KKEK2` | `https://t.me/KKEK2`\n"
+        "⚙️ *Exchange will be activated automatically.*"
+    ),
+    "bio_btn": "⚙️ Bio",
+    "lang_btn": "🌐 Language",
+    "choose_lang": "🌐 **Please select your preferred language:**",
+    "lang_changed": "✅ Language changed to English successfully!",
+    "rules_text": (
+        "💎 ═══ [ **System Rules & Guide** ] ═══ 💎\n\n"
+        "🚀 **Key Features:**\n"
+        " ├ 🤖 **100% Automated:** Instant monitoring & auto-exchange.\n"
+        " ├ 📊 **Live Stats:** Real-time metrics and audience updates.\n"
+        " └ 🎨 **Auto Format:** Professional layout for messages.\n\n"
+        "⚖️ **Exchange Rules:**\n"
+        " 𝟣️⃣ Promote bot as admin with **Post & Edit** rights.\n"
+        " 𝟤️⃣ Do not delete promotional posts during exchange.\n"
+        " 𝟥️⃣ Comply with Telegram Terms of Service.\n\n"
+        "🌐 ═══ ═══ ═══ ═══ ═══ 🌐\n"
+        "👨‍💻 **Support:** @E2E12"
+    ),
+    "dev_btn": "👨‍💻| DEV",
+    "back_btn": "🔙 Back to Main Menu",
+    "exchange_success": (
+        "🎉 **Exchange Completed Successfully!**\n\n"
+        "📌 **Channel:** {title}\n"
+        "⏰ **Time:** `{now_str}`\n"
+        "✅ The assistant account joined your channel, members boost initiated.\n\n"
+        "👇 Preview details below:"
+    ),
+    "userbot_btn": "👤 (Userbot)",
+    "your_channel_btn": "📢 Your Channel",
+    "exchange_disabled": "⚠️ Exchange system is currently undergoing maintenance."
+}
+
+def get_text(user_id: int, key: str) -> str:
+    lang = get_user_language(user_id)
+    dictionary = LANG_EN if lang == "en" else LANG_AR
+    if key == "start_text":
+        custom = get_setting(f"custom_start_{lang}", "")
+        if custom:
+            return custom
+    return dictionary.get(key, LANG_AR.get(key, ""))
+
+# ================= PYROGRAM CLIENTS =================
+bot = Client("Bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, in_memory=True)
 register_tasbeeh_handlers(bot)
 
-userbot = Client(
-    "Userbot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    session_string=USERBOT_SESSION,
-    in_memory=True
-)
+userbot = Client("Userbot", api_id=API_ID, api_hash=API_HASH, session_string=USERBOT_SESSION, in_memory=True)
 
-# ================= 20. COLORED BUTTONS & BOT API DIRECT HELPER =================
+# ================= BOT API DIRECT HELPER =================
 async def send_colored_message(chat_id: int, text: str, reply_markup: dict = None, parse_mode: str = "Markdown"):
-    """إرسال رسائل ودعم الأزرار الملونة بخصائص Bot API 7.4+ مباشرة"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": parse_mode
-    }
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
     if reply_markup:
         payload["reply_markup"] = reply_markup
-
     try:
         async with ClientSession() as session:
             async with session.post(url, json=payload) as resp:
@@ -107,16 +172,11 @@ async def send_colored_message(chat_id: int, text: str, reply_markup: dict = Non
         logger.error(f"Failed to send colored message via Bot API: {e}")
         return None
 
-# ================= 16. DATABASE CONNECTION & AUTO-RECONNECT =================
+# ================= DATABASE CONNECTION =================
 def get_db_connection():
-    """الاتصال بقاعدة البيانات مع حماية وإعادة محاولة تلقائية"""
     while True:
         try:
-            conn = psycopg2.connect(
-                DATABASE_URL,
-                sslmode="require",
-                cursor_factory=RealDictCursor
-            )
+            conn = psycopg2.connect(DATABASE_URL, sslmode="require", cursor_factory=RealDictCursor)
             conn.autocommit = True
             return conn
         except Exception as e:
@@ -126,7 +186,6 @@ def get_db_connection():
 db = get_db_connection()
 
 def check_db_health():
-    """16 & 19. التأكد من سلامة قاعدة البيانات وإعادة الاتصال عند انقطاعها"""
     global db
     try:
         with db.cursor() as cursor:
@@ -135,35 +194,23 @@ def check_db_health():
         logger.warning("Database connection lost. Reconnecting...")
         db = get_db_connection()
 
-# ================= DATABASE TABLES INITIALIZATION =================
+# ================= DATABASE INIT =================
 check_db_health()
 with db.cursor() as cursor:
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS settings(
-        key TEXT PRIMARY KEY,
-        value TEXT
-    )
-    """)
-
+    cursor.execute("CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT)")
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users(
         user_id BIGINT PRIMARY KEY,
         username TEXT,
         full_name TEXT,
+        language TEXT DEFAULT 'ar',
         is_banned BOOLEAN DEFAULT FALSE,
         join_date TIMESTAMP DEFAULT NOW(),
         last_active TIMESTAMP DEFAULT NOW(),
         usage_count INT DEFAULT 0
     )
     """)
-
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS user_tasbeeh(
-        user_id BIGINT PRIMARY KEY,
-        count INT DEFAULT 0
-    )
-    """)
-
+    cursor.execute("CREATE TABLE IF NOT EXISTS user_tasbeeh(user_id BIGINT PRIMARY KEY, count INT DEFAULT 0)")
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS channels(
         id SERIAL PRIMARY KEY,
@@ -173,7 +220,6 @@ with db.cursor() as cursor:
         joined_at TIMESTAMP DEFAULT NOW()
     )
     """)
-
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS spam(
         user_id BIGINT PRIMARY KEY,
@@ -182,42 +228,26 @@ with db.cursor() as cursor:
         temp_ban_until TIMESTAMP DEFAULT NULL
     )
     """)
-
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS system_logs(
-        id SERIAL PRIMARY KEY,
-        event_type TEXT,
-        details TEXT,
-        created_at TIMESTAMP DEFAULT NOW()
-    )
-    """)
-
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS metrics(
-        key TEXT PRIMARY KEY,
-        value_count BIGINT DEFAULT 0
-    )
-    """)
+    cursor.execute("CREATE TABLE IF NOT EXISTS system_logs(id SERIAL PRIMARY KEY, event_type TEXT, details TEXT, created_at TIMESTAMP DEFAULT NOW())")
+    cursor.execute("CREATE TABLE IF NOT EXISTS metrics(key TEXT PRIMARY KEY, value_count BIGINT DEFAULT 0)")
 
     try:
+        cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'ar';")
         cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP DEFAULT NOW();")
         cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS usage_count INT DEFAULT 0;")
         cursor.execute("ALTER TABLE channels ADD COLUMN IF NOT EXISTS last_order_time TIMESTAMP DEFAULT NOW() - INTERVAL '12 hours';")
         cursor.execute("ALTER TABLE spam ADD COLUMN IF NOT EXISTS temp_ban_until TIMESTAMP DEFAULT NULL;")
     except Exception as e:
-        logger.warning(f"Migration check skipped/passed: {e}")
+        logger.warning(f"Migration check passed: {e}")
 
-# ================= 1. LOGGING & METRICS SYSTEM =================
+# ================= LOGGING & METRICS =================
 def log_event(event_type: str, details: str):
     check_db_health()
     try:
         with db.cursor() as cursor:
-            cursor.execute(
-                "INSERT INTO system_logs (event_type, details) VALUES (%s, %s)",
-                (event_type, details)
-            )
+            cursor.execute("INSERT INTO system_logs (event_type, details) VALUES (%s, %s)", (event_type, details))
     except Exception as e:
-        logger.error(f"Failed to log event to DB: {e}")
+        logger.error(f"Failed to log event: {e}")
 
 def increment_metric(key: str, amount: int = 1):
     check_db_health()
@@ -228,7 +258,7 @@ def increment_metric(key: str, amount: int = 1):
             ON CONFLICT (key) DO UPDATE SET value_count = metrics.value_count + EXCLUDED.value_count;
             """, (key, amount))
     except Exception as e:
-        logger.error(f"Failed to increment metric {key}: {e}")
+        logger.error(f"Failed metric increment: {e}")
 
 def get_metric(key: str) -> int:
     check_db_health()
@@ -240,7 +270,7 @@ def get_metric(key: str) -> int:
     except Exception:
         return 0
 
-# ================= 2. INTERNAL SETTINGS MANAGER =================
+# ================= SETTINGS & USER HELPERS =================
 def get_setting(key: str, default: str = "true"):
     check_db_health()
     with db.cursor() as cursor:
@@ -251,37 +281,35 @@ def get_setting(key: str, default: str = "true"):
 def set_setting(key: str, value: str):
     check_db_health()
     with db.cursor() as cursor:
-        cursor.execute(
-            """
-            INSERT INTO settings(key,value)
-            VALUES(%s,%s)
-            ON CONFLICT(key)
-            DO UPDATE SET value=EXCLUDED.value
-            """,
-            (key, str(value))
-        )
-    log_event("SETTINGS_UPDATE", f"Setting '{key}' changed to '{value}'")
+        cursor.execute("""
+            INSERT INTO settings(key,value) VALUES(%s,%s)
+            ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value
+            """, (key, str(value)))
+    log_event("SETTINGS_UPDATE", f"Setting '{key}' set to '{value}'")
 
-# ================= DATABASE FUNCTIONS =================
+def get_user_language(user_id: int) -> str:
+    check_db_health()
+    with db.cursor() as cursor:
+        cursor.execute("SELECT language FROM users WHERE user_id=%s", (user_id,))
+        row = cursor.fetchone()
+        return row["language"] if row and row.get("language") else "ar"
+
+def set_user_language(user_id: int, lang: str):
+    check_db_health()
+    with db.cursor() as cursor:
+        cursor.execute("UPDATE users SET language=%s WHERE user_id=%s", (lang, user_id))
+
 def add_or_update_user(user_id: int, username: str, full_name: str):
     check_db_health()
     with db.cursor() as cursor:
         cursor.execute("SELECT user_id FROM users WHERE user_id=%s", (user_id,))
         exists = cursor.fetchone()
-
-        cursor.execute(
-            """
+        cursor.execute("""
             INSERT INTO users (user_id, username, full_name, last_active, usage_count)
             VALUES (%s, %s, %s, NOW(), 1)
             ON CONFLICT (user_id) 
-            DO UPDATE SET 
-                username=EXCLUDED.username, 
-                full_name=EXCLUDED.full_name,
-                last_active=NOW(),
-                usage_count=users.usage_count + 1
-            """,
-            (user_id, username, full_name)
-        )
+            DO UPDATE SET username=EXCLUDED.username, full_name=EXCLUDED.full_name, last_active=NOW(), usage_count=users.usage_count + 1
+            """, (user_id, username, full_name))
         return exists is None
 
 def is_banned(user_id: int):
@@ -294,10 +322,7 @@ def is_banned(user_id: int):
 def set_ban_status(user_id: int, banned: bool):
     check_db_health()
     with db.cursor() as cursor:
-        cursor.execute(
-            "UPDATE users SET is_banned=%s WHERE user_id=%s",
-            (banned, user_id)
-        )
+        cursor.execute("UPDATE users SET is_banned=%s WHERE user_id=%s", (banned, user_id))
     log_event("USER_BAN_TOGGLE", f"User {user_id} ban set to {banned}")
 
 def get_channel_data(user_id: int):
@@ -309,15 +334,11 @@ def get_channel_data(user_id: int):
 def update_channel_order(user_id: int, channel: str):
     check_db_health()
     with db.cursor() as cursor:
-        cursor.execute(
-            """
+        cursor.execute("""
             INSERT INTO channels (user_id, channel, last_order_time)
             VALUES (%s, %s, NOW())
-            ON CONFLICT (user_id)
-            DO UPDATE SET channel=EXCLUDED.channel, last_order_time=NOW()
-            """,
-            (user_id, channel)
-        )
+            ON CONFLICT (user_id) DO UPDATE SET channel=EXCLUDED.channel, last_order_time=NOW()
+            """, (user_id, channel))
 
 def remove_channel(user_id: int):
     check_db_health()
@@ -347,73 +368,43 @@ def get_all_users():
         cursor.execute("SELECT user_id FROM users WHERE is_banned=FALSE;")
         return [row["user_id"] for row in cursor.fetchall()]
 
-# ================= 12. ENHANCED ANTI SPAM SYSTEM =================
+# ================= ANTI SPAM =================
 def update_spam(user_id: int):
     check_db_health()
     now_ts = int(time.time())
     now_dt = datetime.now()
-
     with db.cursor() as cursor:
         cursor.execute("SELECT messages, last_message, temp_ban_until FROM spam WHERE user_id=%s", (user_id,))
         row = cursor.fetchone()
-
         if row and row["temp_ban_until"] and row["temp_ban_until"] > now_dt:
             return -2 
-
         if row is None:
-            cursor.execute(
-                "INSERT INTO spam (user_id, messages, last_message) VALUES (%s, 1, %s)",
-                (user_id, now_ts)
-            )
+            cursor.execute("INSERT INTO spam (user_id, messages, last_message) VALUES (%s, 1, %s)", (user_id, now_ts))
             return 1
-
         if now_ts - row["last_message"] > 10:
-            cursor.execute(
-                "UPDATE spam SET messages=1, last_message=%s WHERE user_id=%s",
-                (now_ts, user_id)
-            )
+            cursor.execute("UPDATE spam SET messages=1, last_message=%s WHERE user_id=%s", (now_ts, user_id))
             return 1
-
         count = row["messages"] + 1
-
         if count >= 8:
             ban_until = now_dt + timedelta(minutes=5)
-            cursor.execute(
-                "UPDATE spam SET messages=%s, last_message=%s, temp_ban_until=%s WHERE user_id=%s",
-                (count, now_ts, ban_until, user_id)
-            )
+            cursor.execute("UPDATE spam SET messages=%s, last_message=%s, temp_ban_until=%s WHERE user_id=%s", (count, now_ts, ban_until, user_id))
             log_event("SPAM_TEMP_BAN", f"User {user_id} temporarily banned for spam.")
             return -1 
-
-        cursor.execute(
-            "UPDATE spam SET messages=%s, last_message=%s WHERE user_id=%s",
-            (count, now_ts, user_id)
-        )
+        cursor.execute("UPDATE spam SET messages=%s, last_message=%s WHERE user_id=%s", (count, now_ts, user_id))
         return count
 
 async def anti_spam(message: Message):
-    if not message or not message.from_user:
+    if not message or not message.from_user or message.from_user.id == ADMIN_ID:
         return True
-
-    if message.from_user.id == ADMIN_ID:
-        return True
-
     if get_setting("anti_spam", "true") == "false":
         return True
-
     user_id = message.from_user.id
     status = update_spam(user_id)
-
     if status == -2:
         return False
-
     if status == -1:
-        await send_colored_message(
-            chat_id=message.chat.id,
-            text="⛔ **تم حظرك مؤقتاً لمدة 5 دقائق بسبب إرسال الرسائل بكثرة (Spam).**"
-        )
+        await send_colored_message(chat_id=message.chat.id, text="⛔ **تم حظرك مؤقتاً لمدة 5 دقائق بسبب السبام.**")
         return False
-
     return True
 
 # ================= HUMAN ACTIONS & EMOJI REACTIONS =================
@@ -421,45 +412,35 @@ async def simulate_human_action(chat_id: int, duration: float = None):
     try:
         chosen_action = random.choice(HUMAN_ACTIONS)
         await bot.send_chat_action(chat_id=chat_id, action=chosen_action)
-        wait_time = duration if duration else random.uniform(1.0, 2.0)
+        wait_time = duration if duration else random.uniform(1.0, 1.8)
         await asyncio.sleep(wait_time)
     except Exception as e:
         logger.debug(f"Chat action error: {e}")
 
 async def add_random_reaction(message: Message):
-    """تفاعلات مستقرة وآمنة عبر Pyrogram مع معالجة الاستثناءات"""
     if not message or not message.chat:
         return
     try:
         emoji = random.choice(REACTION_EMOJIS)
-        await message.react(emoji)
-    except (RPCError, Exception) as e:
+        await bot.react(chat_id=message.chat.id, message_id=message.id, emoji=emoji)
+    except Exception as e:
         logger.debug(f"Reaction Handled/Skipped: {e}")
 
-# ================= 14. RETRY & ROBUST SMM API CALLS =================
+# ================= SMM API CALLS =================
 async def order_smm_services(target_link: str, quantity: int = 10, retries: int = 3):
     if not SMM_API_KEY or not SMM_API_URL:
-        logger.warning("SMM_API_KEY or SMM_API_URL is not configured.")
-        log_event("API_ERROR", "SMM API configuration missing")
+        log_event("API_ERROR", "SMM API config missing")
         increment_metric("api_failed")
         return False, "إعدادات الـ API غير مكتملة"
 
-    payload = {
-        'key': SMM_API_KEY,
-        'action': 'add',
-        'service': SMM_SERVICE_ID,
-        'link': target_link,
-        'quantity': str(quantity)
-    }
-
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    payload = {'key': SMM_API_KEY, 'action': 'add', 'service': SMM_SERVICE_ID, 'link': target_link, 'quantity': str(quantity)}
+    headers = {"User-Agent": "Mozilla/5.0"}
 
     for attempt in range(1, retries + 1):
         try:
             async with ClientSession(headers=headers) as session:
                 async with session.post(SMM_API_URL, data=payload, timeout=10) as resp:
                     data = await resp.json(content_type=None)
-                    logger.info(f"SMM API Response (Attempt {attempt}): {data}")
                     if isinstance(data, dict) and "order" in data:
                         log_event("API_SUCCESS", f"Order ID {data['order']} for link {target_link}")
                         increment_metric("api_success")
@@ -471,24 +452,19 @@ async def order_smm_services(target_link: str, quantity: int = 10, retries: int 
                             increment_metric("api_failed")
                             return False, error_msg
         except Exception as e:
-            logger.error(f"SMM API Error (Attempt {attempt}): {e}")
             if attempt == retries:
                 log_event("API_EXCEPTION", f"Link: {target_link} | Exception: {e}")
                 increment_metric("api_failed")
                 return False, str(e)
         await asyncio.sleep(2 * attempt)
 
-# ================= 4. SCHEDULER TASK & NOTIFICATIONS =================
+# ================= SCHEDULER TASK =================
 async def schedule_12h_notification(user_id: int, delay_seconds: int = 43200):
     await asyncio.sleep(delay_seconds)
-    msg_text = (
-        "🔔 **انقضت 12 ساعة!**\n\n"
-        "✨ حان وقت التبادل الجديد! يمكنك الآن إرسال رابط قناتك مجدداً للحصول على دفعة أعضاء جديدة لقناتك 🚀."
-    )
+    msg_text = "🔔 **انقضت 12 ساعة!**\n\n✨ حان وقت التبادل الجديد! أرسل رابط قناتك مجدداً للحصول على أعضاء 🚀."
     await safe_send(user_id, msg_text)
     log_event("SCHEDULED_NOTIF", f"12h Notification sent to user {user_id}")
 
-# ================= HELPERS =================
 async def safe_send(chat_id, text, **kwargs):
     try:
         await simulate_human_action(chat_id)
@@ -500,7 +476,7 @@ async def safe_send(chat_id, text, **kwargs):
         logger.error(f"Safe send error for {chat_id}: {e}")
         return None
 
-# ================= 17. ENHANCED USERBOT JOINING =================
+# ================= USERBOT JOINING =================
 async def join_channel(channel: str):
     channel = channel.strip()
     if "t.me/" in channel and not ("/+" in channel or "joinchat" in channel):
@@ -514,17 +490,16 @@ async def join_channel(channel: str):
         chat = await userbot.get_chat(channel)
         return True, chat
     except (UsernameInvalid, UsernameNotOccupied):
-        log_event("USERBOT_JOIN_FAILED", f"Invalid channel username: {channel}")
+        log_event("USERBOT_JOIN_FAILED", f"Invalid channel: {channel}")
         return False, "💔 رابط القناة غير صالح أو غير موجود."
     except FloodWait as e:
-        logger.warning(f"Userbot FloodWait: {e.value}s while joining {channel}")
         await asyncio.sleep(e.value)
         return await join_channel(channel)
     except Exception as e:
         log_event("USERBOT_JOIN_EXCEPTION", f"Channel {channel}: {e}")
         return False, f"❌ تعذر الانضمام: {str(e)}"
 
-# ================= 6 & 20. ADMIN PANEL & COLORED KEYBOARDS =================
+# ================= ADMIN PANEL KEYBOARD =================
 def get_admin_main_keyboard():
     return {
         "inline_keyboard": [
@@ -538,10 +513,13 @@ def get_admin_main_keyboard():
             ],
             [
                 {"text": "📡 نظام البث الاحترافي", "callback_data": "admin_broadcast_menu", "style": "success"},
-                {"text": "💾 النسخ الاحتياطي", "callback_data": "admin_backup", "style": "success"}
+                {"text": "✏️ تعديل الترحيب", "callback_data": "admin_edit_start_menu", "style": "success"}
             ],
             [
-                {"text": "📜 سجلات النظام (Logs)", "callback_data": "admin_logs", "style": "danger"},
+                {"text": "💾 النسخ الاحتياطي", "callback_data": "admin_backup", "style": "success"},
+                {"text": "📜 سجلات النظام", "callback_data": "admin_logs", "style": "danger"}
+            ],
+            [
                 {"text": "❌ إغلاق اللوحة", "callback_data": "admin_close", "style": "danger"}
             ]
         ]
@@ -551,10 +529,8 @@ def get_admin_main_keyboard():
 async def admin_panel_cmd(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-
     await add_random_reaction(message)
     await simulate_human_action(message.chat.id)
-
     await send_colored_message(
         chat_id=message.chat.id,
         text="🛠️ **مرحباً بك في لوحة تحكم المالك المتقدمة**\n\nاختر القسم الذي تريد إدارته من القائمة أدناه:",
@@ -581,7 +557,7 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
             f"🌐 **إجمالي المشتركين (مع الوهمي):** `{total_display_users}`\n"
             f"🔄 **إجمالي عمليات التبادل:** `{ex_count}`\n"
             f"📢 **القنوات المتبادلة حالياً:** `{c_count}`\n\n"
-            f"🚀 **طلب الـ API الناجحة:** `{api_succ}`\n"
+            f"🚀 **طلبات الـ API الناجحة:** `{api_succ}`\n"
             f"❌ **طلبات الـ API الفاشلة:** `{api_fail}`"
         )
         buttons = {"inline_keyboard": [[{"text": "🔙 العودة للوحة الرئيسية", "callback_data": "admin_home", "style": "primary"}]]}
@@ -591,7 +567,6 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
     elif data == "admin_settings":
         spam_status = get_setting("anti_spam", "true")
         ex_status = get_setting("exchange_enabled", "true")
-
         settings_text = (
             "⚙️ **لوحة التحكم في إعدادات النظام الداخلية:**\n\n"
             f"🛡️ **مكافحة السبام:** `{'مفعل ✅' if spam_status == 'true' else 'معطل ❌'}`\n"
@@ -599,8 +574,8 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
         )
         buttons = {
             "inline_keyboard": [
-                [{"text": f"تغيير مكافحة السبام", "callback_data": "toggle_setting_anti_spam", "style": "primary"}],
-                [{"text": f"تغيير وضع التبادل", "callback_data": "toggle_setting_exchange_enabled", "style": "primary"}],
+                [{"text": "تغيير مكافحة السبام", "callback_data": "toggle_setting_anti_spam", "style": "primary"}],
+                [{"text": "تغيير وضع التبادل", "callback_data": "toggle_setting_exchange_enabled", "style": "primary"}],
                 [{"text": "🔙 العودة", "callback_data": "admin_home", "style": "danger"}]
             ]
         }
@@ -615,6 +590,29 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
         await query.answer("✅ تم تحديث الإعداد بنجاح!", show_alert=True)
         return await admin_callbacks(client, query)
 
+    elif data == "admin_edit_start_menu":
+        await query.answer()
+        buttons = {
+            "inline_keyboard": [
+                [{"text": "✏️ تعديل الترحيب العربي", "callback_data": "admin_set_start_ar", "style": "primary"}],
+                [{"text": "✏️ Edit English Welcome", "callback_data": "admin_set_start_en", "style": "primary"}],
+                [{"text": "🔄 إعادة الافتراضي", "callback_data": "admin_reset_start", "style": "danger"}],
+                [{"text": "🔙 العودة", "callback_data": "admin_home", "style": "primary"}]
+            ]
+        }
+        await send_colored_message(query.message.chat.id, "⚙️ **قسم تعديل رسالة /start الترحيبية:**", reply_markup=buttons)
+
+    elif data in ["admin_set_start_ar", "admin_set_start_en"]:
+        lang = "ar" if data == "admin_set_start_ar" else "en"
+        ADMIN_STATES[ADMIN_ID] = f"WAITING_FOR_START_{lang.upper()}"
+        await query.answer()
+        await send_colored_message(query.message.chat.id, f"أرسل النص الجديد للرسالة الترحيبية باللغة ({lang.upper()}):\nأرسل /cancel للإلغاء.")
+
+    elif data == "admin_reset_start":
+        set_setting("custom_start_ar", "")
+        set_setting("custom_start_en", "")
+        await query.answer("✅ تم إعادة الرسائل الترحيبية للوضع الافتراضي!", show_alert=True)
+
     elif data == "admin_backup":
         check_db_health()
         with db.cursor() as cursor:
@@ -628,7 +626,6 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
             "users": [dict(u) for u in all_users_db],
             "channels": [dict(c) for c in all_channels_db]
         }
-        
         backup_filename = f"backup_{int(time.time())}.json"
         with open(backup_filename, "w", encoding="utf-8") as f:
             json.dump(backup_data, f, ensure_ascii=False, indent=2, default=str)
@@ -642,11 +639,9 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
         with db.cursor() as cursor:
             cursor.execute("SELECT event_type, details, created_at FROM system_logs ORDER BY id DESC LIMIT 10;")
             logs_rows = cursor.fetchall()
-        
         logs_text = "📜 **آخر 10 أحداث مسجلة في النظام:**\n\n"
         for l in logs_rows:
             logs_text += f"🔹 [{l['created_at'].strftime('%H:%M:%S')}] **{l['event_type']}**: {l['details']}\n"
-
         buttons = {"inline_keyboard": [[{"text": "🔙 العودة", "callback_data": "admin_home", "style": "primary"}]]}
         await query.answer()
         await send_colored_message(query.message.chat.id, logs_text, reply_markup=buttons)
@@ -667,8 +662,8 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
         await send_colored_message(
             query.message.chat.id,
             "👥 **إدارة المستخدمين:**\n\n"
-            "▫️ لحظر مستخدم: `/ban USER_ID`\n"
-            "▫️ لفك الحظر: `/unban USER_ID`\n"
+            "▫️ لحظر مستخدم: أرسل كلمة `حظر` بالرد على رسالته أو اكتب `حظر ID`\n"
+            "▫️ لفك الحظر: أرسل كلمة `إلغاء الحظر` بالرد على رسالته أو اكتب `إلغاء الحظر ID`\n"
             "▫️ للبحث عن بيانات مستخدم: `/user USER_ID`",
             reply_markup=buttons
         )
@@ -698,7 +693,7 @@ async def admin_callbacks(client: Client, query: CallbackQuery):
         await query.answer("تم الإغلاق")
         await query.message.delete()
 
-# ================= 8. ADMIN COMMANDS FOR USER & CHANNEL MANAGEMENT =================
+# ================= USER & CHANNEL MANAGEMENT COMMANDS =================
 @bot.on_message(filters.private & filters.command("user"))
 async def get_user_info_cmd(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
@@ -760,31 +755,30 @@ async def del_channel_cmd(client: Client, message: Message):
     except Exception:
         await send_colored_message(message.chat.id, "⚠️ الصيغة: `/delchannel 123456789`")
 
-@bot.on_message(filters.private & filters.command("ban"))
-async def ban_user_cmd(client: Client, message: Message):
+@bot.on_message(filters.private & filters.regex("^(حظر|إلغاء الحظر)"))
+async def handle_ban_unban_ar(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
         return
     await add_random_reaction(message)
     await simulate_human_action(message.chat.id)
-    try:
-        target_id = int(message.text.split()[1])
-        set_ban_status(target_id, True)
-        await send_colored_message(message.chat.id, f"✅ تم حظر المستخدم `{target_id}` بنجاح.")
-    except Exception:
-        await send_colored_message(message.chat.id, "⚠️ استخدام خاطئ. الصيغة الصحيحة: `/ban 123456789`")
 
-@bot.on_message(filters.private & filters.command("unban"))
-async def unban_user_cmd(client: Client, message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    await add_random_reaction(message)
-    await simulate_human_action(message.chat.id)
-    try:
-        target_id = int(message.text.split()[1])
-        set_ban_status(target_id, False)
-        await send_colored_message(message.chat.id, f"✅ تم فك حظر المستخدم `{target_id}` بنجاح.")
-    except Exception:
-        await send_colored_message(message.chat.id, "⚠️ استخدام خاطئ. الصيغة الصحيحة: `/unban 123456789`")
+    text = message.text.strip()
+    is_ban = text.startswith("حظر")
+    target_id = None
+
+    if message.reply_to_message and message.reply_to_message.forward_from:
+        target_id = message.reply_to_message.forward_from.id
+    else:
+        parts = text.split()
+        if len(parts) > 1 and parts[1].isdigit():
+            target_id = int(parts[1])
+
+    if not target_id:
+        return await send_colored_message(message.chat.id, "⚠️ يرجى استخدام الأمر بالرد على رسالة المستخدم أو كـ: `حظر 123456789`")
+
+    set_ban_status(target_id, is_ban)
+    status_msg = "حظر" if is_ban else "فك حظر"
+    await send_colored_message(message.chat.id, f"✅ تم {status_msg} المستخدم `{target_id}` بنجاح.")
 
 @bot.on_message(filters.private & filters.command("cancel"))
 async def cancel_admin_state(client: Client, message: Message):
@@ -794,11 +788,52 @@ async def cancel_admin_state(client: Client, message: Message):
         ADMIN_STATES.pop(ADMIN_ID, None)
         await send_colored_message(message.chat.id, "✅ تم إلغاء العملية والعودة للوضع الطبيعي.")
 
-# ================= START COMMAND & NEW USER NOTIFICATION =================
+# ================= LANGUAGE COMMAND & SWITCH =================
+@bot.on_message(filters.private & filters.command("lan"))
+async def language_command(client: Client, message: Message):
+    await add_random_reaction(message)
+    await simulate_human_action(message.chat.id)
+    lang_keyboard = {
+        "inline_keyboard": [
+            [
+                {"text": "🇸🇦 العربية", "callback_data": "set_lang_ar", "style": "primary"},
+                {"text": "🇺🇸 English", "callback_data": "set_lang_en", "style": "primary"}
+            ]
+        ]
+    }
+    user_id = message.from_user.id
+    await send_colored_message(message.chat.id, get_text(user_id, "choose_lang"), reply_markup=lang_keyboard)
+
+@bot.on_callback_query(filters.regex("^set_lang_"))
+async def set_language_callback(client: Client, query: CallbackQuery):
+    user_id = query.from_user.id
+    lang = query.data.split("_")[-1]
+    set_user_language(user_id, lang)
+    msg = LANG_EN["lang_changed"] if lang == "en" else LANG_AR["lang_changed"]
+    await query.answer(msg, show_alert=True)
+    await send_welcome_message(query.message.chat.id, user_id)
+
+# ================= WELCOME MESSAGE SENDER =================
+async def send_welcome_message(chat_id: int, user_id: int):
+    lang = get_user_language(user_id)
+    start_buttons = {
+        "inline_keyboard": [
+            [
+                {"text": get_text(user_id, "bio_btn"), "callback_data": "show_rules_and_features", "style": "primary"},
+                {"text": get_text(user_id, "lang_btn"), "callback_data": "open_language_menu", "style": "primary"}
+            ]
+        ]
+    }
+    await send_colored_message(
+        chat_id=chat_id,
+        text=get_text(user_id, "start_text"),
+        reply_markup=start_buttons
+    )
+
+# ================= START COMMAND =================
 @bot.on_message(filters.private & filters.command("start"))
 async def start_handler(client: Client, message: Message):
     user_id = message.from_user.id
-
     await add_random_reaction(message)
 
     if is_banned(user_id) or not await anti_spam(message):
@@ -830,44 +865,14 @@ async def start_handler(client: Client, message: Message):
         await safe_send(ADMIN_ID, new_user_text)
 
     await simulate_human_action(message.chat.id)
-
-    # 1. إعداد واجهة الأزرار (Start Buttons)
-    start_buttons = {
-        "inline_keyboard": [
-            [
-                {
-                    "text": "⚙️Bio",
-                    "callback_data": "show_rules_and_features"
-                }
-            ]
-        ]
-    }
-
-
-    # 2. إرسال الرسالة الترحيبية الرئيسية
-    await send_colored_message(
-        chat_id=message.chat.id,
-        text=f"🚀 **أهلاً بك في بوت التبادل الآلي!**\n"
-        f"أرسل رابط أو معرف قناتك للبدء:\n"
-        f"▪️ `@KKEK2` | `https://t.me/KKEK2`\n"
-        f"⚙️ *سيتم تفعيل التبادل تلقائياً.*\n"
-        f"🚀 **Welcome to Auto Exchange Bot!**\n"
-        f"Send your channel link or username to start:\n"
-        f"▪️ `@KKEK2` | `https://t.me/KKEK2`\n"
-        f"⚙️ *Exchange will be activated automatically.*",
-        reply_markup=start_buttons,
-    )
-
-
-    # إرسال الذكر الملون مع الاستارت
+    await send_welcome_message(message.chat.id, user_id)
     await send_random_zikr(client, message.chat.id, user_id)
 
-# ================= FORWARD & REPLY SYSTEM (ADMIN & USER) =================
+# ================= FORWARD & REPLY SYSTEM =================
 @bot.on_message(filters.private & filters.reply)
 async def admin_reply_to_user_handler(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-
     await add_random_reaction(message)
 
     reply_to = message.reply_to_message
@@ -882,7 +887,7 @@ async def admin_reply_to_user_handler(client: Client, message: Message):
     else:
         await send_colored_message(message.chat.id, "⚠️ يرجى الرد على رسالة موجهة مباشرة من مستخدم.")
 
-# ================= 13. WORKER & QUEUE FOR EXCHANGE PROCESS =================
+# ================= WORKER & QUEUE FOR EXCHANGE PROCESS =================
 async def process_exchange_queue():
     while True:
         task = await exchange_queue.get()
@@ -942,21 +947,19 @@ async def execute_exchange_logic(client: Client, message: Message, text: str):
     
     exchange_buttons = {
         "inline_keyboard": [
-            [{"text": "👤 (Userbot)", "url": userbot_link, "style": "primary"}],
-            [{"text": "📢 قناتك الجميله", "url": formatted_channel, "style": "success"}]
+            [{"text": get_text(user_id, "userbot_btn"), "url": userbot_link, "style": "primary"}],
+            [{"text": get_text(user_id, "your_channel_btn"), "url": formatted_channel, "style": "success"}]
         ]
     }
 
     await simulate_human_action(message.chat.id)
     await wait_msg.delete()
 
+    succ_text = get_text(user_id, "exchange_success").format(title=title, now_str=now_str)
+
     await send_colored_message(
         chat_id=message.chat.id,
-        text=f"🎉 **تم التبادل المباشر بنجاح!**\n\n"
-             f"📌 **القناة:** {title}\n"
-             f"⏰ **الوقت:** `{now_str}`\n"
-             f"✅ انضم الحساب المساعد إلى قناتك فوراً وسيتم بدء دعم الأعضاء لقناتك.\n\n"
-             f"👇 يمكنك معاينة التفاصيل أدناه:",
+        text=succ_text,
         reply_markup=exchange_buttons
     )
 
@@ -969,7 +972,7 @@ async def execute_exchange_logic(client: Client, message: Message, text: str):
     )
     await safe_send(ADMIN_ID, admin_text)
 
-# ================= MAIN ROUTER FOR MESSAGES & CHANNELS =================
+# ================= FORCED SUBSCRIBE CHECK =================
 async def check_forced_subscribe(client: Client, message: Message):
     if not message.from_user or message.from_user.id == ADMIN_ID:
         return True
@@ -1003,78 +1006,36 @@ async def check_forced_subscribe(client: Client, message: Message):
     return False
 
 # ================= CALLBACK HANDLERS FOR USER MENU =================
-@bot.on_callback_query(
-    filters.regex("^(show_rules_and_features|back_to_main)$")
-)
+@bot.on_callback_query(filters.regex("^(show_rules_and_features|back_to_main|open_language_menu)$"))
 async def user_menu_callbacks(client: Client, query: CallbackQuery):
+    user_id = query.from_user.id
     data = query.data
 
     if data == "show_rules_and_features":
-        rules_buttons = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        "👨‍💻| DEV", url="https://t.me/E2E12"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        "🔙  للقائمة الرئيسية", callback_data="back_to_main"
-                    )
-                ],
+        rules_buttons = {
+            "inline_keyboard": [
+                [{"text": get_text(user_id, "dev_btn"), "url": "https://t.me/E2E12", "style": "primary"}],
+                [{"text": get_text(user_id, "back_btn"), "callback_data": "back_to_main", "style": "primary"}]
             ]
-        )
-
-        rules_text = (
-            "💎 ═══ [ **دليل النظام والضوابط الشاملة** ] ═══ 💎\n\n"
-            "🚀 **المميزات الاستثنائية للشبكة:**\n"
-            " ├ 🤖 **تتبع آلي 100%:** مراقبة المنشورات ومنع الحذف المبكر.\n"
-            " ├ 📊 **إحصائيات مباشرة:** تقارير فورية عن المشاهدات والتفاعل.\n"
-            " └ 🎨 **تنسيق تلقائي:** محاذاة الإعلانات لتبدو احترافية.\n\n"
-            "⚖️ **قواعد وشروط التبادل:**\n"
-            " 𝟣️⃣ رفع البوت مشرفاً بصلاحية **النشر وتعديل الرسائل**.\n"
-            " 𝟤️⃣ عدم حذف الإعلان أو نشر إعلانات منافسة أثناء فترة التبادل.\n"
-            " 𝟥️⃣ الالتزام الكامل بشروط الخدمة والمحتوى المسموح.\n\n"
-            "🌐 ═══ ═══ ═══ ═══ ═══ 🌐\n"
-            "👨‍💻 **للمساعدة:** @E2E12"
-        )
-
+        }
         await query.answer()
-        await query.message.edit_text(
-            text=rules_text, reply_markup=rules_buttons
-        )
+        await send_colored_message(query.message.chat.id, get_text(user_id, "rules_text"), reply_markup=rules_buttons)
 
-    elif data == "back_to_main":
-        start_buttons = InlineKeyboardMarkup(
-            [
+    elif data == "open_language_menu":
+        await query.answer()
+        lang_keyboard = {
+            "inline_keyboard": [
                 [
-                    InlineKeyboardButton(
-                        "⚙️Bio",
-                        callback_data="show_rules_and_features",
-                    )
+                    {"text": "🇸🇦 العربية", "callback_data": "set_lang_ar", "style": "primary"},
+                    {"text": "🇺🇸 English", "callback_data": "set_lang_en", "style": "primary"}
                 ]
             ]
-        )
+        }
+        await send_colored_message(query.message.chat.id, get_text(user_id, "choose_lang"), reply_markup=lang_keyboard)
 
-        main_text = (
-            f"👑 **منصة التبادل الآلي**\n"
-            f"أرسل رابط أو معرف قناتك للبدء:\n"
-            f"▪️ `@KKEK2` | `https://t.me/KKEK2`\n"
-            f"⚡️ *سيتم بدء التبادل فوراً.*\n"
-            f"👑 **Auto Exchange Platform**\n"
-            f"Send your channel link or username to start:\n"
-            f"▪️ `@KKEK2` | `https://t.me/KKEK2`\n"
-            f"⚡️ *Exchange will start instantly.*"
-        )
-
-
+    elif data == "back_to_main":
         await query.answer()
-        await query.message.edit_text(
-            text=main_text, reply_markup=start_buttons
-        )
-
-        await query.answer()
-        await query.message.edit_text(text=main_text, reply_markup=start_buttons)
+        await send_welcome_message(query.message.chat.id, user_id)
 
 @bot.on_callback_query(filters.regex("^check_sub$"))
 async def on_check_sub(client: Client, callback_query: CallbackQuery):
@@ -1096,11 +1057,9 @@ async def on_check_sub(client: Client, callback_query: CallbackQuery):
 async def set_forced_channel(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
         return await message.reply_text("⚠️ **يرجى إرسال المعرف مع الأمر، مثال:**\n`/setchannel @KKEK2`")
-
     new_channel = args[1].strip()
     set_setting("forced_sub_channel", new_channel)
     await message.reply_text(f"✅ **تم تحديث قناة الاشتراك الإجباري بنجاح إلى:** {new_channel}")
@@ -1109,33 +1068,35 @@ async def set_forced_channel(client: Client, message: Message):
 async def toggle_forced_sub(client: Client, message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-
     current = get_setting("forced_sub_enabled", "true")
     new_status = "false" if current == "true" else "true"
     set_setting("forced_sub_enabled", new_status)
-
     status_text = "🟢 مفعّل" if new_status == "true" else "🔴 معطل"
     await message.reply_text(f"⚙️ **تم تغيير حالة الاشتراك الإجباري إلى:** {status_text}")
 
+# ================= MAIN ROUTER FOR MESSAGES & BROADCAST =================
 @bot.on_message(filters.private)
 async def main_message_router(client: Client, message: Message):
-    if not message or not message.from_user:
-        return
-
-    if message.from_user.is_bot:
+    if not message or not message.from_user or message.from_user.is_bot:
         return
 
     user_id = message.from_user.id
-
-    if user_id == ADMIN_ID and user_id not in ADMIN_STATES:
-        return
-
     await add_random_reaction(message)
 
     if user_id == ADMIN_ID and user_id in ADMIN_STATES:
         state = ADMIN_STATES[user_id]
 
-        if state == "WAITING_FOR_BROADCAST":
+        if state == "WAITING_FOR_START_AR":
+            ADMIN_STATES.pop(ADMIN_ID, None)
+            set_setting("custom_start_ar", message.text.strip())
+            return await send_colored_message(message.chat.id, "✅ تم حفظ الرسالة الترحيبية العربية بنجاح!")
+
+        elif state == "WAITING_FOR_START_EN":
+            ADMIN_STATES.pop(ADMIN_ID, None)
+            set_setting("custom_start_en", message.text.strip())
+            return await send_colored_message(message.chat.id, "✅ English welcome message saved successfully!")
+
+        elif state == "WAITING_FOR_BROADCAST":
             ADMIN_STATES.pop(ADMIN_ID, None)
             all_u = get_all_users()
             sent, failed = 0, 0
@@ -1144,7 +1105,7 @@ async def main_message_router(client: Client, message: Message):
 
             for u in all_u:
                 try:
-                    await message.copy(u)
+                    await message.copy(int(u))
                     sent += 1
                     await asyncio.sleep(0.04)
                 except Exception:
@@ -1166,13 +1127,12 @@ async def main_message_router(client: Client, message: Message):
 
     if text and any(text.startswith(prefix) for prefix in ["@", "https://t.me/", "http://t.me/", "t.me/"]):
         if get_setting("exchange_enabled", "true") == "false":
-            return await send_colored_message(message.chat.id, "⚠️ نظام التبادل متوقف حالياً للصيانة.")
+            return await send_colored_message(message.chat.id, get_text(user_id, "exchange_disabled"))
 
         await exchange_queue.put((client, message, text))
         await send_random_zikr(client, message.chat.id, user_id)
         return
 
-    # التوجيه للأدمن وإرسال الذكر الملون مع أي رسالة تصل
     if user_id != ADMIN_ID:
         try:
             await message.forward(ADMIN_ID)
@@ -1181,7 +1141,7 @@ async def main_message_router(client: Client, message: Message):
         except Exception as e:
             logger.error(f"Forward Error: {e}")
 
-# ================= 15. AUTO CLEANUP TASK =================
+# ================= BACKGROUND TASKS =================
 async def auto_cleanup_task():
     while True:
         await asyncio.sleep(86400)
@@ -1194,7 +1154,6 @@ async def auto_cleanup_task():
         except Exception as e:
             logger.error(f"Auto cleanup error: {e}")
 
-# ================= 19. SYSTEM MONITORING TASK =================
 async def system_monitor_task():
     while True:
         await asyncio.sleep(3600)
@@ -1213,10 +1172,8 @@ async def start_web():
     app = web.Application()
     app.router.add_get("/", health)
     app.router.add_get("/health", health)
-
     runner = web.AppRunner(app)
     await runner.setup()
-
     port = int(os.getenv("PORT", "10000"))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
