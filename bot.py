@@ -821,11 +821,11 @@ async def start_handler(client: Client, message: Message):
         user_mention = message.from_user.mention
         
         new_user_text = (
-            f"👤 **عضو جديد انضم للبوت!**\n\n"
+            f"❤️‍🔥👤 **عضو جديد انضم للبوت!**\n\n"
             f"▫️ **الاسم:** {user_mention}\n"
             f"▫️ **الآيدي:** `{user_id}`\n"
             f"▫️ **اليوزر:** @{username if username else 'بدون يوزر'}\n"
-            f"▫️ **العدد الكلي:** `{total_users_count}`"
+            f"▫️🔥 **العدد الكلي:** `{total_users_count}`"
         )
         await safe_send(ADMIN_ID, new_user_text)
 
@@ -847,12 +847,16 @@ async def start_handler(client: Client, message: Message):
     # 2. إرسال الرسالة الترحيبية الرئيسية
     await send_colored_message(
         chat_id=message.chat.id,
-        text=f"⚡️ **شبكة التبادل الآلي المتقدمة** | **AutoExchange Engine**\n\n"
-        f"أهلاً بك **{message.from_user.first_name}** 🌹\n\n"
-        f"✨ **أرسل الآن رابط قناتك بالشكل التالي ؛** لبدء التبادل التلقائي:\n"
-        f"▫️ `@KKEK2` \n"
-        f"▫️ `https://t.me/KKEK2`\n\n"
-        f"💡 *سيقوم النظام بفحص صلاحيات قناتك وتفعيل التبادل فوراً.*",
+        text=f"🚀 **مرحباً بك في بوت التبادل!**\n"
+        f"🚀 **Welcome to Smart Exchange Engine!**\n\n"
+        f"أهلاً **{message.from_user.first_name}**، يسعدنا انضمامك 🌺\n"
+        f"Hello **{message.from_user.first_name}**, glad to have you here! 🌺\n\n"
+        f"للبدء، يُرجى إرسال **معرف** أو **رابط** قناتك:\n"
+        f"To get started, please send your channel **username** or **link**:\n"
+        f"▪️ `@KKEK2` \n"
+        f"▪️ `https://t.me/KKEK2`\n\n"
+        f"⚙️ *البوت الفريـد من نوعه.*\n"
+        f"⚙️ *System will automatically verify permissions & activate exchange.*",
         reply_markup=start_buttons,
     )
 
@@ -1054,15 +1058,16 @@ async def user_menu_callbacks(client: Client, query: CallbackQuery):
         )
 
         main_text = (
-            f"👑 ═══ [ **AUTO EXCHANGE ENGINE** ] ═══ 👑\n\n"
-            f"أهلاً بك **{query.from_user.first_name}** 🌹\n"
-            f"مرحباً بك في بوت الآلي الذكي لتبادل وتطوير القنوات 🚀\n\n"
-            f"📍 **كيفية البدء في التبادل التلقائي:**\n"
-            f"أرسل رابط أو معرف قناتك بأحد الأشكال التالية:\n"
+            f"👑 **بوت التبادل الآلي المتقدم | Auto Exchange Platform**\n\n"
+            f"أهلاً **{query.from_user.first_name}**، مرحباً بك في بوت التبادل الذكي 🚀\n"
+            f"Welcome **{query.from_user.first_name}** to the smart exchange system 🚀\n\n"
+            f"📍 **للبدء، أرسل معرف أو رابط قناتك:**\n"
+            f"📍 **To start, send your channel username or link:**\n"
             f" ▫️ `@KKEK2` \n"
             f" ▫️ `https://t.me/KKEK2`\n\n"
-            f"⚡️ *سيتم فحص الصلاحيات والتحقق من القناة وبدء التبادل فوراً!*"
+            f"⚡️ *Channel will be verified & exchange activated instantly.*"
         )
+
 
         await query.answer()
         await query.message.edit_text(
